@@ -59,7 +59,9 @@ void HpgRefProduct::getRosParams() {
     }
 
     if (!getRosUint(node_, "tmode3", tmode3_)) {
-      throw std::runtime_error("Invalid settings: TMODE3 must be set");
+      // Default to disabled mode if tmode3 parameter is not found
+      RCLCPP_WARN(node_->get_logger(), "tmode3 parameter not found, defaulting to disabled mode (0)");
+      tmode3_ = ublox_msgs::msg::CfgTMODE3::FLAGS_MODE_DISABLED;
     }
 
     if (tmode3_ == ublox_msgs::msg::CfgTMODE3::FLAGS_MODE_FIXED) {

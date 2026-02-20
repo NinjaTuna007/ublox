@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Launch argument for robot namespace -->
+  <arg name="robot_name" default="" description="Robot namespace for GPS topics (leave empty for no namespace)"/>
+  
+  <!-- Path to configuration file -->
+  <let name="config_file" value="$(find-pkg-share ublox_gps)/config/c94_m8p_rover.yaml"/>
+  
+  <!-- Launch the ublox GPS node with namespace -->
+  <node pkg="ublox_gps" 
+        exec="ublox_gps_node" 
+        name="ublox_gps_node"
+        namespace="$(var robot_name)"
+        output="both">
+    <param from="$(var config_file)"/>
+  </node>
+  
+  <!-- Event handler to shutdown when the GPS node exits -->
+  <executable cmd="echo" output="log"/>
+</launch>
