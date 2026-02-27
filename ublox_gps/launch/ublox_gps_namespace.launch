@@ -2,6 +2,8 @@
 <launch>
   <!-- Launch argument for robot namespace -->
   <arg name="robot_name" default="" description="Robot namespace for GPS topics (leave empty for no namespace)"/>
+  <!-- Launch argument for serial device port -->
+  <arg name="device" default="/dev/ttyACM0" description="Serial port for the u-blox GPS device"/>
   
   <!-- Path to configuration file -->
   <let name="config_file" value="$(find-pkg-share ublox_gps)/config/c94_m8p_rover.yaml"/>
@@ -13,6 +15,7 @@
         namespace="$(var robot_name)"
         output="both">
     <param from="$(var config_file)"/>
+    <param name="device" value="$(var device)"/>
   </node>
   
   <!-- Event handler to shutdown when the GPS node exits -->
