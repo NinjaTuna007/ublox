@@ -16,6 +16,9 @@
         output="both">
     <param from="$(var config_file)"/>
     <param name="device" value="$(var device)"/>
+    <!-- Node hardcodes an absolute "/rtcm" subscription; remap it to a relative
+         name so RTCM corrections are received on the namespaced topic. -->
+    <remap from="/rtcm" to="rtcm"/>
   </node>
   
   <!-- Event handler to shutdown when the GPS node exits -->
