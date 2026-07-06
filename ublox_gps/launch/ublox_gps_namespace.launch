@@ -4,9 +4,11 @@
   <arg name="robot_name" default="" description="Robot namespace for GPS topics (leave empty for no namespace)"/>
   <!-- Launch argument for serial device port -->
   <arg name="device" default="/dev/ttyACM0" description="Serial port for the u-blox GPS device"/>
+  <!-- Config file name (looked up in ublox_gps/config); override to switch boards -->
+  <arg name="config_file" default="c94_m8p_rover.yaml" description="Config file name inside ublox_gps/config to load"/>
   
-  <!-- Path to configuration file -->
-  <let name="config_file" value="$(find-pkg-share ublox_gps)/config/c94_m8p_rover.yaml"/>
+  <!-- Resolve the config file name to a full path in the ublox_gps share dir -->
+  <let name="config_path" value="$(find-pkg-share ublox_gps)/config/$(var config_file)"/>
   
   <!-- Launch the ublox GPS node with namespace -->
   <node pkg="ublox_gps" 
@@ -14,7 +16,7 @@
         name="ublox_gps_node"
         namespace="$(var robot_name)"
         output="both">
-    <param from="$(var config_file)"/>
+    <param from="$(var config_path)"/>
     <param name="device" value="$(var device)"/>
     <!-- Node hardcodes an absolute "/rtcm" subscription; remap it to a relative
          name so RTCM corrections are received on the namespaced topic. -->

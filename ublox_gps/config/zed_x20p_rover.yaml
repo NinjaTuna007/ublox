@@ -1,0 +1,93 @@
+/**:
+  ros__parameters:
+    debug: 1
+
+    device: /dev/ttyACM0
+    frame_id: gps
+
+    # Critical for ZED-X20P with this older ROS driver:
+    # Do not send old CFG-PRT / CFG-GNSS / CFG-NMEA configs.
+    config_on_startup: false
+    save_on_shutdown: false
+    clear_bbr: false
+
+    rate: 1.0
+    nav_rate: 1
+
+    dynamic_model: sea
+    fix_mode: auto
+    dr_limit: 0
+    enable_ppp: false
+
+    load:
+      mask: 0
+      device: 0
+
+    save:
+      mask: 0
+      device: 0
+
+    # Keep this as the connection baud the driver already found.
+    uart1:
+      baudrate: 115200
+      in: 33
+      out: 1
+
+    # Disable GNSS configuration from ROS.
+    # The ZED-X20P reports GPS/GAL/BDS/QZSS/NAVIC, but this driver is old
+    # and its support check is not happy with the X20P / PROTVER 50.10.
+    gnss:
+      gps: false
+      galileo: false
+      beidou: false
+      qzss: false
+      glonass: false
+      sbas: false
+      imes: false
+
+    # Do NOT set NMEA config from this ROS 2 driver.
+    # If nmea.set is true, this driver expects extra fields and crashes.
+    nmea:
+      set: false
+      high_prec: false
+
+    inf:
+      all: false
+
+    publish:
+      all: false
+      nmea: true
+
+      nav:
+        all: false
+        pvt: true
+        status: true
+        sat: true
+        relposned: true
+        timeutc: true
+        timegps: true
+        clock: true
+        posllh: true
+        velned: true
+        svin: false
+
+      rxm:
+        all: false
+        rtcm: false
+        raw: false
+        sfrb: false
+        eph: false
+        almRaw: false
+
+      aid:
+        all: false
+        hui: false
+        eph: false
+        alm: false
+
+      mon:
+        all: false
+        hw: false
+
+      tim:
+        tm2: false
