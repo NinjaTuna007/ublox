@@ -5,7 +5,7 @@
   <!-- Launch argument for serial device port -->
   <arg name="device" default="/dev/ttyACM0" description="Serial port for the u-blox GPS device"/>
   <!-- Config file name (looked up in ublox_gps/config); override to switch boards -->
-  <arg name="config_file" default="c94_m8p_rover.yaml" description="Config file name inside ublox_gps/config to load"/>
+  <arg name="config_file" default="zed_x20p_rover.yaml" description="Config file name inside ublox_gps/config to load"/>
   
   <!-- Resolve the config file name to a full path in the ublox_gps share dir -->
   <let name="config_path" value="$(find-pkg-share ublox_gps)/config/$(var config_file)"/>
