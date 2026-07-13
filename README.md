@@ -1,6 +1,6 @@
 # Stick GPS / RTK / WARAPS stack (`smarc2_stick` branch)
 
-This branch is the **all-in-one navigation stack for Stick surface vehicles**. It replaces the old split between `ublox_gps` (KumarRobotics), `smarc_gps_converters`, and `_vendor/ublox_dgnss`.
+This branch is the **all-in-one navigation stack for Stick surface vehicles**. It replaces the older multi-package setup (`ublox_gps`, separate SMARC/TF converters, and an external `ublox_dgnss` tree).
 
 Use the **`ros2`** branch if you still need the legacy KumarRobotics `ublox_gps` driver.
 
@@ -79,8 +79,6 @@ git -C src/stick/ublox checkout smarc2_stick
 colcon build --paths src/stick/ublox
 source install/setup.bash
 ```
-
-> If you previously built `_vendor/ublox_dgnss`, that path has a `COLCON_IGNORE` file so colcon does not build two copies of the same packages.
 
 ---
 
@@ -245,7 +243,6 @@ Upstream copies for smarc2 PR: `config/smarc2_upstream/`
 | `smarc_gps_converters/scripts/stick_bringup.sh` | `ublox_stick_bringup/scripts/stick_bringup.sh` |
 | `smarc_gps_converters` SMARC converter | `ublox_stick_smarc` |
 | `smarc_gps_converters` TF publisher | `ublox_stick_tf` |
-| `_vendor/ublox_dgnss` | This repo (`smarc2_stick` branch) |
 | `ublox_gps` (KumarRobotics) | `ublox_dgnss_node` (aussierobots) |
 
 ---
