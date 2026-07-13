@@ -1,0 +1,27 @@
+/**:
+    ros__parameters:
+        mqtt:
+            client:
+                protocol: 4
+            connection:
+                host: localhost
+                port: 1889
+                keepalive: 30
+            namespace: "waraps/unit/surface/real/stick_1"
+            to_mqtt:
+              [
+                "heartbeat",
+                "sensor_info",
+                "sensor/position",
+                "sensor/heading",
+                "sensor/course",
+                "sensor/speed",
+                "sensor/roll",
+                "sensor/pitch",
+                "sensor/depth",
+                "sensor/sound_velocity",
+              ]
+            to_ros:
+              [
+                "abort",
+              ]

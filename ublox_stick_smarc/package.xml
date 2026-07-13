@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ublox_stick_smarc</name>
+  <version>1.0.0</version>
+  <description>Publish SMARC GPS topics from ublox_dgnss fix and VELNED</description>
+  <maintainer email="your.email@example.com">Stick Team</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geographic_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>ublox_ubx_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

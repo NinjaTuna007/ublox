@@ -90,3 +90,6 @@ gen/*
 *.out
 *.app
 
+
+__pycache__/
+*.pyc

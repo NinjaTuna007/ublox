@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>ublox_stick_bringup</name>
+  <version>1.0.0</version>
+  <description>Stick GPS/RTK/WARAPS bringup for smarc2_stick branch</description>
+  <maintainer email="your.email@example.com">Stick Team</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ublox_dgnss</exec_depend>
+  <exec_depend>ublox_dgnss_node</exec_depend>
+  <exec_depend>ublox_nav_sat_fix_hp_node</exec_depend>
+  <exec_depend>ntrip_client_node</exec_depend>
+  <exec_depend>ublox_stick_smarc</exec_depend>
+  <exec_depend>ublox_stick_tf</exec_depend>
+  <exec_depend>wasp_bt</exec_depend>
+  <exec_depend>str_json_mqtt_bridge</exec_depend>
+  <exec_depend>pvptu_driver</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

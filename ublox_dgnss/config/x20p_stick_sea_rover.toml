@@ -1,0 +1,56 @@
+# Stick seafaring RTK rover — trimmed from generic x20p_ubx_config.toml.
+# Provenance: ublox/ublox_gps/config/zed_x20p_rover.yaml on ros2 branch (dynamic_model: sea).
+# Runtime values are enforced in stick_gps_stack.launch.py after TOML load.
+
+[metadata]
+device_family = "X20P"
+description = "Stick seafaring RTK rover — reconciled from zed_x20p_rover.yaml"
+version = "1.0"
+
+[parameters]
+include = [
+    "CFG_NAVSPG_DYNMODEL",
+    "CFG_NAVSPG_FIXMODE",
+    "CFG_NAVSPG_INIFIX3D",
+    "CFG_NAVSPG_UTCSTANDARD",
+    "CFG_NAVHPG_DGNSSMODE",
+    "CFG_NAVCOR_ENABLE_GAL_HAS",
+    "CFG_NAVCOR_ENABLE_HOST",
+    "CFG_RATE_MEAS",
+    "CFG_RATE_NAV",
+    "CFG_RATE_TIMEREF",
+    "CFG_SIGNAL_GPS_ENA",
+    "CFG_SIGNAL_GPS_L1CA_ENA",
+    "CFG_SIGNAL_GPS_L2C_ENA",
+    "CFG_SIGNAL_GPS_L5_ENA",
+    "CFG_SIGNAL_GAL_ENA",
+    "CFG_SIGNAL_GAL_E1_ENA",
+    "CFG_SIGNAL_GAL_E5B_ENA",
+    "CFG_SIGNAL_GAL_E6_ENA",
+    "CFG_SIGNAL_BDS_ENA",
+    "CFG_SIGNAL_BDS_B1_ENA",
+    "CFG_SIGNAL_BDS_B2_ENA",
+    "CFG_SIGNAL_BDS_B2A_ENA",
+    "CFG_SIGNAL_BDS_B3_ENA",
+    "CFG_SIGNAL_GLO_ENA",
+    "CFG_SIGNAL_GLO_L1_ENA",
+    "CFG_SIGNAL_GLO_L2_ENA",
+    "CFG_SIGNAL_QZSS_ENA",
+    "CFG_SIGNAL_QZSS_L1CA_ENA",
+    "CFG_SIGNAL_QZSS_L1CB_ENA",
+    "CFG_SIGNAL_QZSS_L1S_ENA",
+    "CFG_SIGNAL_QZSS_L2C_ENA",
+    "CFG_SIGNAL_QZSS_L5_ENA",
+    "CFG_SIGNAL_SBAS_ENA",
+    "CFG_SIGNAL_SBAS_L1CA_ENA",
+    "CFG_USBINPROT_RTCM3X",
+    "CFG_USBINPROT_UBX",
+    "CFG_USBOUTPROT_UBX",
+    "CFG_USBOUTPROT_NMEA",
+    "CFG_MSGOUT_UBX_NAV_HPPOSLLH_USB",
+    "CFG_MSGOUT_UBX_NAV_STATUS_USB",
+    "CFG_MSGOUT_UBX_NAV_COV_USB",
+    "CFG_MSGOUT_UBX_NAV_VELNED_USB",
+    "CFG_MSGOUT_UBX_RXM_COR_USB",
+    "CFG_MSGOUT_UBX_RXM_RTCM_USB",
+]
