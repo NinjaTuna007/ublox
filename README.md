@@ -38,7 +38,7 @@ flowchart LR
 | `ublox_dgnss_node` | USB driver for the ZED-X20P; injects RTCM, configures the receiver |
 | `ublox_nav_sat_fix_hp_node` | Turns high-precision UBX position into `sensor_msgs/NavSatFix` |
 | `ublox_stick_smarc` | Publishes `smarc/latlon`, `smarc/speed`, `smarc/heading` |
-| `ublox_stick_tf` | Publishes TF: `utm_* → utm → {robot}/odom → base_link → modem` |
+| `ublox_stick_tf` | Publishes TF: `utm_* → utm → {robot}/odom → base_link → modem_link` |
 | `ublox_stick_bringup` | Launch files, tmux script, RTK credentials template, WARAPS L1 config |
 | `ublox_dgnss` | Metapackage + receiver TOML configs |
 | `ublox_ubx_msgs` / `ublox_ubx_interfaces` | Low-level u-blox message definitions |
@@ -99,6 +99,7 @@ This opens a **tmux** session named `stick_1_bringup` (or `stick_2_bringup`).
 | tmux window | What runs | stick_1 only? |
 |-------------|-----------|---------------|
 | `gps` | Full GPS stack (driver + SMARC + TF + NTRIP) | always |
+| `foxglove` | Foxglove WebSocket bridge (`ws://localhost:8765`) | always |
 | `waraps` | WARAPS vehicle agent | always |
 | `mqtt` | MQTT bridge (Level-1 topics only) | always |
 | `pvptu` | Sound velocity sensor driver | **stick_1** |
@@ -121,10 +122,11 @@ SKIP_ATTACH=1 ros2 run ublox_stick_bringup stick_bringup.sh 1
 ```bash
 ros2 launch ublox_stick_bringup stick_gps_stack.launch.py \
   robot_name:=stick_1 \
-  frame_id:=stick_1_gps \
   username:=YOUR_NTRIP_USER \
   password:=YOUR_NTRIP_PASSWORD
 ```
+
+`frame_id` defaults to `{robot_name}/base_link` so NavSatFix aligns with the TF antenna frame (required for Foxglove map overlay).
 
 Credentials can also come from `RTK_CREDENTIALS_FILE` if you want a non-default path.
 
@@ -154,7 +156,7 @@ ros2 topic hz /ntrip_client/rtcm         # ~1–3 Hz (bursty)
 
 # 6. TF tree
 ros2 run tf2_tools view_frames
-# Expect: utm_* → utm → stick_1/odom → stick_1/base_link → stick_1/modem
+# Expect: utm_* → utm → stick_1/odom → stick_1/base_link → stick_1/modem_link
 ```
 
 ### Frame meanings
@@ -163,9 +165,9 @@ ros2 run tf2_tools view_frames
 |-------|------------|
 | `utm_33_V` (auto) | Global UTM zone for your location |
 | `utm` | Zone-neutral UTM parent |
-| `stick_1/odom` | Local map origin — locked on first GPS fix |
-| `stick_1/base_link` | **GPS antenna phase center** (position + yaw) |
-| `stick_1/modem` | Acoustic modem, 1.57 m below antenna by default |
+| `stick_1/odom` | Local map origin — locked on first GPS fix (XY from UTM, Z at ellipsoid height datum) |
+| `stick_1/base_link` | **GPS antenna phase center** (position + yaw); Z in odom is relative to first-fix altitude |
+| `stick_1/modem_link` | Acoustic modem, 1.57 m below antenna by default |
 
 ---
 

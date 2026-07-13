@@ -41,6 +41,7 @@ class StickSmarcPublisher(Node):
             UBXNavStatus, status_topic, self.status_callback, gps_qos)
 
         self.latlon_pub = self.create_publisher(GeoPoint, 'smarc/latlon', 10)
+        self.altitude_pub = self.create_publisher(Float32, 'smarc/altitude', 10)
         self.speed_pub = self.create_publisher(Float32, 'smarc/speed', 10)
         self.heading_pub = self.create_publisher(Float32, 'smarc/heading', 10)
 
@@ -60,10 +61,13 @@ class StickSmarcPublisher(Node):
         latlon.altitude = msg.altitude
         self.latlon_pub.publish(latlon)
 
+        alt_msg = Float32()
+        alt_msg.data = float(msg.altitude)
+        self.altitude_pub.publish(alt_msg)
+
         if self._rtk_active and msg.status.status < NavSatStatus.STATUS_GBAS_FIX:
             self.get_logger().debug(
-                'RTK active in ubx_nav_status but NavSatFix status=%d',
-                msg.status.status)
+                f'RTK active in ubx_nav_status but NavSatFix status={msg.status.status}')
 
     def velned_callback(self, msg: UBXNavVelNED):
         vel_n = msg.vel_n * 1e-3

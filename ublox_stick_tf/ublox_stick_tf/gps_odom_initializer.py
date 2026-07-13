@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Anchor utm_{zone} -> utm -> {robot}/odom from the first valid GPS fix."""
+"""Publish static UTM datum chain and base_link->modem_link in one /tf_static message."""
 
 import math
 
@@ -13,7 +13,7 @@ from ublox_stick_tf import stick_transforms as st
 
 
 class GpsOdomInitializer(Node):
-    """Lock a local odom datum on the first smarc/latlon fix."""
+    """Lock utm_{zone} -> utm -> {robot}/odom and publish modem_link offset."""
 
     def __init__(self):
         super().__init__('gps_odom_initializer')
@@ -22,6 +22,9 @@ class GpsOdomInitializer(Node):
         self.declare_parameter('latlon_topic', 'smarc/latlon')
         self.declare_parameter('update_rate', 1.0)
         self.declare_parameter('verbose', False)
+        self.declare_parameter('modem_x_offset', 0.0)
+        self.declare_parameter('modem_y_offset', 0.0)
+        self.declare_parameter('modem_z_offset', -1.57)
 
         self.frame_prefix = self.get_parameter('frame_prefix').value
         latlon_topic = self.get_parameter('latlon_topic').value
@@ -29,6 +32,8 @@ class GpsOdomInitializer(Node):
         self.verbose = bool(self.get_parameter('verbose').value)
 
         self.odom_frame = '{}/odom'.format(self.frame_prefix)
+        self.base_frame = '{}/base_link'.format(self.frame_prefix)
+        self.modem_frame = st.modem_frame_id(self.frame_prefix)
         self.origin_set = False
         self.transforms = []
 
@@ -40,6 +45,16 @@ class GpsOdomInitializer(Node):
 
         self.get_logger().info(
             'GPS odom initializer waiting for fix on "{}"'.format(latlon_topic))
+
+    def _modem_static_transform(self, x, y, z):
+        tf = TransformStamped()
+        tf.header.frame_id = self.base_frame
+        tf.child_frame_id = self.modem_frame
+        tf.transform.translation.x = x
+        tf.transform.translation.y = y
+        tf.transform.translation.z = z
+        tf.transform.rotation.w = 1.0
+        return [tf]
 
     def latlon_callback(self, msg: GeoPoint):
         if self.origin_set:
@@ -69,25 +84,33 @@ class GpsOdomInitializer(Node):
         utm_to_odom.transform.translation.z = 0.0
         utm_to_odom.transform.rotation.w = 1.0
 
-        self.transforms = [zone_to_utm, utm_to_odom]
+        self.transforms = [zone_to_utm, utm_to_odom] + self._modem_static_transform(
+            float(self.get_parameter('modem_x_offset').value),
+            float(self.get_parameter('modem_y_offset').value),
+            float(self.get_parameter('modem_z_offset').value),
+        )
         self.origin_set = True
-        self.static_broadcaster.sendTransform(self.transforms)
+        self._publish_static()
 
         self.get_logger().info(
             'Datum locked at lat={:.7f} lon={:.7f} -> {} '
-            'easting={:.2f} northing={:.2f}; broadcasting {} -> utm -> {}'.format(
+            'easting={:.2f} northing={:.2f}; broadcasting {} -> utm -> {} -> {} -> {}'.format(
                 msg.latitude, msg.longitude, utm_zone_frame,
-                easting, northing, utm_zone_frame, self.odom_frame))
+                easting, northing, utm_zone_frame, self.odom_frame,
+                self.base_frame, self.modem_frame))
 
-    def republish(self):
-        if not self.origin_set:
-            return
+    def _publish_static(self):
         now = self.get_clock().now().to_msg()
         for tf in self.transforms:
             tf.header.stamp = now
         self.static_broadcaster.sendTransform(self.transforms)
+
+    def republish(self):
+        if not self.origin_set:
+            return
+        self._publish_static()
         if self.verbose:
-            self.get_logger().debug('Republished static datum TF')
+            self.get_logger().debug('Republished static UTM + modem_link TF')
 
 
 def main(args=None):

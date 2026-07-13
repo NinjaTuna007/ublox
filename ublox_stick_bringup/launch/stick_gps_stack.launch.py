@@ -14,6 +14,8 @@ from launch_ros.substitutions import FindPackageShare
 def _launch_setup(context, *args, **kwargs):
     robot_name = LaunchConfiguration('robot_name').perform(context)
     frame_id = LaunchConfiguration('frame_id').perform(context)
+    if not frame_id:
+        frame_id = '{}/base_link'.format(robot_name)
     device_family = LaunchConfiguration('device_family').perform(context)
     device_serial_string = LaunchConfiguration('device_serial_string').perform(context)
     log_level = LaunchConfiguration('log_level').perform(context)
@@ -84,7 +86,7 @@ def _launch_setup(context, *args, **kwargs):
         namespace=robot_name,
         output='screen',
         parameters=[{
-            'fix_topic': 'ublox_nav_sat_fix_hp/fix',
+            'fix_topic': 'ublox_gps_node/fix',
             'velned_topic': 'ubx_nav_vel_ned',
             'status_topic': 'ubx_nav_status',
         }],
@@ -99,6 +101,7 @@ def _launch_setup(context, *args, **kwargs):
         parameters=[{
             'frame_prefix': robot_name,
             'latlon_topic': 'smarc/latlon',
+            'modem_z_offset': modem_z_offset,
         }],
     )
 
@@ -112,7 +115,6 @@ def _launch_setup(context, *args, **kwargs):
             'frame_prefix': robot_name,
             'latlon_topic': 'smarc/latlon',
             'heading_topic': 'smarc/heading',
-            'modem_z_offset': modem_z_offset,
         }],
     )
 
@@ -161,8 +163,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'frame_id',
-            default_value='stick_1_gps',
-            description='frame_id in published message headers',
+            default_value='',
+            description='frame_id in GPS message headers (default: {robot_name}/base_link)',
         ),
         DeclareLaunchArgument('device_family', default_value='X20P'),
         DeclareLaunchArgument('device_serial_string', default_value=''),

@@ -25,6 +25,11 @@ def utm_zone_frame_id(zone_number, zone_letter):
     return 'utm_{}_{}'.format(zone_number, zone_letter)
 
 
+def modem_frame_id(frame_prefix):
+    """TF frame for the acoustic modem."""
+    return '{}/modem_link'.format(frame_prefix)
+
+
 def yaw_to_quat_xyzw(yaw_rad):
     """Yaw-only ENU quaternion in ROS (x, y, z, w) order."""
     q_wxyz = euler2quat(0.0, 0.0, yaw_rad, axes='sxyz')
