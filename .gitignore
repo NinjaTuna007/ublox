@@ -93,3 +93,6 @@ gen/*
 
 __pycache__/
 *.pyc
+
+# RTK credentials (copy from rtk_credentials.env.example)
+ublox_stick_bringup/config/rtk_credentials.env

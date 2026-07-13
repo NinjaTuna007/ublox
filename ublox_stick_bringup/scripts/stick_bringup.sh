@@ -1,7 +1,14 @@
 #! /bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_SHARE="$(ros2 pkg prefix ublox_stick_bringup)/share/ublox_stick_bringup"
-ENV_FILE="${RTK_CREDENTIALS_FILE:-${PKG_SHARE}/config/rtk_credentials.env}"
+SOURCE_ENV="${SCRIPT_DIR}/../config/rtk_credentials.env"
+if [ -n "${RTK_CREDENTIALS_FILE}" ]; then
+    ENV_FILE="${RTK_CREDENTIALS_FILE}"
+elif [ -f "${SOURCE_ENV}" ]; then
+    ENV_FILE="${SOURCE_ENV}"
+else
+    ENV_FILE="${PKG_SHARE}/config/rtk_credentials.env"
+fi
 
 STICK_NUMBER="${1:-${STICK_NUMBER:-1}}"
 ROBOT_NAME=stick_${STICK_NUMBER}

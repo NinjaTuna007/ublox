@@ -64,9 +64,11 @@ ros2 run ublox_stick_bringup install_ublox_udev.sh
 **2. RTK credentials** (once per machine):
 
 ```bash
-cp $(ros2 pkg prefix ublox_stick_bringup)/share/ublox_stick_bringup/config/rtk_credentials.env.example \
-   ~/rtk_credentials.env
-# Edit ~/rtk_credentials.env — set NTRIP_USERNAME_1/2 and passwords
+cd src/stick/ublox
+cp ublox_stick_bringup/config/rtk_credentials.env.example \
+   ublox_stick_bringup/config/rtk_credentials.env
+# Edit rtk_credentials.env — set NTRIP_USERNAME_1/2 and passwords
+# (gitignored — create before the build in step 3)
 ```
 
 **3. Build** (from your colcon workspace root):
@@ -89,8 +91,7 @@ source install/setup.bash
 ```bash
 source ~/colcon_ws/install/setup.bash
 
-RTK_CREDENTIALS_FILE=~/rtk_credentials.env \
-  ros2 run ublox_stick_bringup stick_bringup.sh 1
+ros2 run ublox_stick_bringup stick_bringup.sh 1
 ```
 
 Replace `1` with `2` for the second stick.
@@ -114,8 +115,7 @@ Reattach: `tmux attach -t stick_1_bringup`
 To launch without attaching (e.g. from automation):
 
 ```bash
-SKIP_ATTACH=1 RTK_CREDENTIALS_FILE=~/rtk_credentials.env \
-  ros2 run ublox_stick_bringup stick_bringup.sh 1
+SKIP_ATTACH=1 ros2 run ublox_stick_bringup stick_bringup.sh 1
 ```
 
 ### GPS stack only (no WARAPS / MQTT)
@@ -128,7 +128,7 @@ ros2 launch ublox_stick_bringup stick_gps_stack.launch.py \
   password:=YOUR_NTRIP_PASSWORD
 ```
 
-Credentials can also come from `RTK_CREDENTIALS_FILE` if you export the vars before launch.
+Credentials can also come from `RTK_CREDENTIALS_FILE` if you want a non-default path.
 
 ---
 
@@ -233,7 +233,7 @@ Upstream copies for smarc2 PR: `config/smarc2_upstream/`
 | No `smarc/heading` | VELNED not enabled or not moving | Confirm `CFG_MSGOUT_UBX_NAV_VELNED_USB` is 1; drive the stick slowly |
 | `ublox_dgnss` failed to load | Stale build | `colcon build --packages-select ublox_dgnss_node --allow-overriding ublox_dgnss_node` then restart gps window |
 | USB permission denied | udev rule missing | Run `install_ublox_udev.sh`, replug USB |
-| NTRIP keeps reconnecting | Bad credentials or no GPS fix for GGA | Check `~/rtk_credentials.env`; wait for fix on `/stick_1/ublox_gps_node/fix` |
+| NTRIP keeps reconnecting | Bad credentials or no GPS fix for GGA | Check `ublox_stick_bringup/config/rtk_credentials.env`; wait for fix on `/stick_1/ublox_gps_node/fix` |
 | MQTT bridge died | Broker unreachable | Check network to `20.240.40.232:1884`; GPS stack still works without MQTT |
 
 ---
