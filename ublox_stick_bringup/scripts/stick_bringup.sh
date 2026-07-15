@@ -22,6 +22,11 @@ DOMAIN=surface
 BROKER_ADDR="${MQTT_BROKER_ADDR:-20.240.40.232}"
 BROKER_PORT="${MQTT_BROKER_PORT:-1884}"
 FOXGLOVE_PORT="${FOXGLOVE_PORT:-8765}"
+GPS_BACKEND="${GPS_BACKEND:-serial_ubx}"
+SERIAL_PORT="${SERIAL_PORT:-/dev/ttyACM1}"
+SERIAL_BAUD="${SERIAL_BAUD:-38400}"
+ENABLE_NTRIP="${ENABLE_NTRIP:-true}"
+DEVICE_SERIAL_STRING="${DEVICE_SERIAL_STRING:-}"
 WARAPS_CONFIG="${WARAPS_CONFIG:-${PKG_SHARE}/config/waraps_level1.yaml}"
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -61,7 +66,12 @@ fi
 
 tmux -2 new-session -d -s "$SESSION" -n 'gps'
 tmux select-window -t "$SESSION:0"
-tmux send-keys "ros2 launch ublox_stick_bringup stick_gps_stack.launch.py robot_name:=$ROBOT_NAME username:=$NTRIP_USERNAME password:=$NTRIP_PASSWORD host:=$NTRIP_HOST port:=$NTRIP_PORT mountpoint:=$NTRIP_MOUNTPOINT" C-m
+GPS_LAUNCH_ARGS="robot_name:=$ROBOT_NAME gps_backend:=$GPS_BACKEND serial_port:=$SERIAL_PORT serial_baud:=$SERIAL_BAUD enable_ntrip:=$ENABLE_NTRIP"
+if [ -n "$DEVICE_SERIAL_STRING" ]; then
+    GPS_LAUNCH_ARGS="$GPS_LAUNCH_ARGS device_serial_string:=$DEVICE_SERIAL_STRING"
+fi
+GPS_LAUNCH_ARGS="$GPS_LAUNCH_ARGS username:=$NTRIP_USERNAME password:=$NTRIP_PASSWORD host:=$NTRIP_HOST port:=$NTRIP_PORT mountpoint:=$NTRIP_MOUNTPOINT"
+tmux send-keys "ros2 launch ublox_stick_bringup stick_gps_stack.launch.py $GPS_LAUNCH_ARGS" C-m
 
 tmux new-window -t "$SESSION:1" -n 'foxglove'
 tmux select-window -t "$SESSION:1"
