@@ -16,6 +16,8 @@
 #define UBLOX_DGNSS_NODE__USB_HPP_
 
 #include <libusb-1.0/libusb.h>
+#include <fcntl.h>
+#include <termios.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -99,6 +101,7 @@ public:
 // external function callback definitions for the connection class
 typedef std::function<void (struct libusb_transfer * transfer)> connection_out_cb_fn;
 typedef std::function<void (struct libusb_transfer * transfer)> connection_in_cb_fn;
+typedef std::function<void (unsigned char * buf, size_t len)> connection_in_raw_cb_fn;
 typedef std::function<void (UsbException e, void * user_data)> connection_exception_cb_fn;
 typedef std::function<void (std::string msg)> connection_debug_cb_fn;
 typedef std::function<void ()> hotplug_attach_cb_fn;
@@ -126,6 +129,13 @@ private:
   std::vector<uint16_t> product_ids_;
   uint16_t connected_product_id_;  // Actual connected device product ID
   std::string serial_str_;
+  std::string serial_port_;
+  uint32_t serial_baud_ = 38400;
+  bool use_serial_ = false;
+  int serial_fd_ = -1;
+  std::vector<unsigned char> serial_in_buffer_;
+  std::vector<unsigned char> serial_rx_accum_;
+  std::vector<unsigned char> serial_scratch_;
   ublox_dgnss::DeviceFamily device_family_;
   int class_id_;
   int ep_data_out_addr_ = 0;
@@ -136,8 +146,9 @@ private:
   unsigned int timeout_ms_;
 
 // asynchronous comms
-  connection_out_cb_fn out_cb_fn_;
   connection_in_cb_fn in_cb_fn_;
+  connection_out_cb_fn out_cb_fn_;
+  connection_in_raw_cb_fn in_raw_cb_fn_;
   connection_exception_cb_fn exception_cb_fn_;
   connection_debug_cb_fn debug_cb_fn_;
   struct timeval timeout_tv_;
@@ -181,6 +192,11 @@ private:
   void cleanup_transfer_queue();
   void cleanup_all_transfers();
   void close_devh();
+  void close_serial();
+  bool open_serial_device();
+  void deliver_serial_in(const unsigned char * data, size_t len);
+  void emit_serial_frame(const unsigned char * data, size_t len);
+  static speed_t serial_baud_to_flag(uint32_t baud);
 
 public:
   void init();  // throws exception on failure
@@ -189,11 +205,16 @@ public:
   Connection(
     int vendor_id, const std::vector<uint16_t> & product_ids, std::string serial_str,
     ublox_dgnss::DeviceFamily device_family = ublox_dgnss::DeviceFamily::F9P,
-    int log_level = LIBUSB_OPTION_LOG_LEVEL);
+    int log_level = LIBUSB_OPTION_LOG_LEVEL,
+    std::string serial_port = "", uint32_t serial_baud = 38400);
   ~Connection();
   void set_in_callback(connection_in_cb_fn in_cb_fn)
   {
     in_cb_fn_ = in_cb_fn;
+  }
+  void set_in_raw_callback(connection_in_raw_cb_fn in_raw_cb_fn)
+  {
+    in_raw_cb_fn_ = in_raw_cb_fn;
   }
   void set_out_callback(connection_out_cb_fn out_cb_fn)
   {
@@ -233,11 +254,23 @@ public:
   }
   bool inline dev_valid()
   {
-    return dev_ != nullptr;
+    return use_serial_ ? (serial_fd_ >= 0) : (dev_ != nullptr);
   }
   bool inline devh_valid()
   {
-    return devh_ != nullptr;
+    return use_serial_ ? (serial_fd_ >= 0) : (devh_ != nullptr);
+  }
+  bool use_serial() const
+  {
+    return use_serial_;
+  }
+  const std::string & serial_port() const
+  {
+    return serial_port_;
+  }
+  uint32_t serial_baud() const
+  {
+    return serial_baud_;
   }
   int bus_number()
   {

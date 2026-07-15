@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Publish dynamic odom->base_link TF from SMARC GPS (UTM datum from gps_odom_initializer)."""
+"""Publish dynamic odom->base_link TF from GPS fix + SMARC heading."""
 
 from geometry_msgs.msg import TransformStamped
-from geographic_msgs.msg import GeoPoint
 import math
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Float32
 from tf2_ros import TransformBroadcaster
 from tf2_ros.buffer import Buffer
@@ -21,12 +22,12 @@ class GpsTfPublisher(Node):
         super().__init__('gps_tf_publisher')
 
         self.declare_parameter('frame_prefix', 'stick_1')
-        self.declare_parameter('latlon_topic', 'smarc/latlon')
+        self.declare_parameter('fix_topic', 'ublox_gps_node/fix')
         self.declare_parameter('heading_topic', 'smarc/heading')
-        self.declare_parameter('publish_rate', 10.0)
+        self.declare_parameter('publish_rate', 40.0)
 
         prefix = self.get_parameter('frame_prefix').value
-        latlon_topic = self.get_parameter('latlon_topic').value
+        fix_topic = self.get_parameter('fix_topic').value
         heading_topic = self.get_parameter('heading_topic').value
         publish_rate = float(self.get_parameter('publish_rate').value)
 
@@ -38,26 +39,35 @@ class GpsTfPublisher(Node):
         self.x_offset = 0.0
         self.y_offset = 0.0
         self.z_offset = None
-        self.latitude = 0.0
-        self.longitude = 0.0
+        self.x = 0.0
+        self.y = 0.0
         self.altitude = 0.0
         self.heading_rad = 0.0
         self.have_position = False
         self.have_heading = False
+        self.have_fix_stamp = False
+        self.last_fix_stamp = None
+        self._heading_fallback_logged = False
+
+        gps_qos = QoSProfile(
+            depth=10,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self)
 
-        self.create_subscription(GeoPoint, latlon_topic, self.latlon_callback, 10)
+        self.create_subscription(NavSatFix, fix_topic, self.fix_callback, gps_qos)
         self.create_subscription(Float32, heading_topic, self.heading_callback, 10)
 
-        period = 1.0 / publish_rate if publish_rate > 0.0 else 0.1
+        period = 1.0 / publish_rate if publish_rate > 0.0 else 0.025
         self.timer = self.create_timer(period, self.publish_tf)
 
         self.get_logger().info(
-            'GPS TF publisher: {} -> {} (modem at {}; waiting for utm -> {} datum)'.format(
-                self.odom_frame, self.base_frame, self.modem_frame, self.odom_frame))
+            'GPS TF publisher: {} -> {} (modem at {}; fix topic: {})'.format(
+                self.odom_frame, self.base_frame, self.modem_frame, fix_topic))
 
     def _ensure_utm_offset(self):
         if self.utm_ready:
@@ -86,30 +96,44 @@ class GpsTfPublisher(Node):
                 self.z_offset))
         return True
 
-    def latlon_callback(self, msg: GeoPoint):
-        self.latitude = msg.latitude
-        self.longitude = msg.longitude
-        self.altitude = msg.altitude
+    def fix_callback(self, msg: NavSatFix):
+        if msg.status.status < 0:
+            return
         if not self._ensure_utm_offset():
             return
         easting, northing, _, _ = st.latlon_to_utm(msg.latitude, msg.longitude)
         self.x = easting - self.x_offset
         self.y = northing - self.y_offset
+        self.altitude = msg.altitude
         self.have_position = True
+        self.last_fix_stamp = msg.header.stamp
+        self.have_fix_stamp = True
 
     def heading_callback(self, msg: Float32):
         self.heading_rad = msg.data
         self.have_heading = True
 
     def publish_tf(self):
-        if not (self.utm_ready and self._ensure_z_offset() and self.have_position and self.have_heading):
+        if not (self.utm_ready and self._ensure_z_offset() and self.have_position):
             return
 
-        yaw = st.heading_rad_to_yaw_enu(self.heading_rad)
+        if self.have_heading:
+            yaw = st.heading_rad_to_yaw_enu(self.heading_rad)
+        else:
+            yaw = 0.0
+            if not self._heading_fallback_logged:
+                self.get_logger().warn(
+                    'Publishing {} -> {} without heading; yaw=0 until smarc/heading arrives'.format(
+                        self.odom_frame, self.base_frame))
+                self._heading_fallback_logged = True
+
         qx, qy, qz, qw = st.yaw_to_quat_xyzw(yaw)
 
         tf = TransformStamped()
-        tf.header.stamp = self.get_clock().now().to_msg()
+        if self.have_fix_stamp:
+            tf.header.stamp = self.last_fix_stamp
+        else:
+            tf.header.stamp = self.get_clock().now().to_msg()
         tf.header.frame_id = self.odom_frame
         tf.child_frame_id = self.base_frame
         tf.transform.translation.x = self.x

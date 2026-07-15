@@ -16,8 +16,10 @@
 #include <chrono>
 #include <thread>
 #include <cstring>
+#include <cerrno>
 #include <string>
 #include <memory>
+#include <sstream>
 #include <sstream>
 #include <iomanip>
 #include "ublox_dgnss_node/callback.hpp"
@@ -29,12 +31,16 @@ namespace usb
 {
 Connection::Connection(
   int vendor_id, const std::vector<uint16_t> & product_ids, std::string serial_str,
-  ublox_dgnss::DeviceFamily device_family, int log_level)
+  ublox_dgnss::DeviceFamily device_family, int log_level,
+  std::string serial_port, uint32_t serial_baud)
 {
   vendor_id_ = vendor_id;
   product_ids_ = product_ids;
   connected_product_id_ = 0;  // Initialize to 0, will be set when device connects
   serial_str_ = serial_str;
+  serial_port_ = std::move(serial_port);
+  serial_baud_ = serial_baud;
+  use_serial_ = !serial_port_.empty();
   device_family_ = device_family;
   class_id_ = LIBUSB_HOTPLUG_MATCH_ANY;
 
@@ -65,6 +71,21 @@ Connection::Connection(
 void Connection::init()
 {
   // Check if already initialized
+  if (use_serial_) {
+    if (serial_fd_ >= 0) {
+      if (debug_cb_fn_) {
+        (debug_cb_fn_)("init() already called - serial port open");
+      }
+      return;
+    }
+    if (open_serial_device()) {
+      if (hp_attach_cb_fn_) {
+        hp_attach_cb_fn_();
+      }
+    }
+    return;
+  }
+
   if (ctx_ != nullptr) {
     if (debug_cb_fn_) {
       (debug_cb_fn_)("init() already called - skipping");
@@ -237,6 +258,200 @@ libusb_device_handle * Connection::open_device_with_serial_string(
   libusb_free_device_list(deviceList, 1);
 
   return devHandle;
+}
+
+speed_t Connection::serial_baud_to_flag(uint32_t baud)
+{
+  switch (baud) {
+    case 9600: return B9600;
+    case 19200: return B19200;
+    case 38400: return B38400;
+    case 57600: return B57600;
+    case 115200: return B115200;
+    case 230400: return B230400;
+    default: return B38400;
+  }
+}
+
+bool Connection::open_serial_device()
+{
+  driver_state_ = USBDriverState::CONNECTING;
+
+  serial_fd_ = ::open(serial_port_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+  if (serial_fd_ < 0) {
+    driver_state_ = USBDriverState::ERROR;
+    throw std::string("Error opening serial port ") + serial_port_ + ": " + std::strerror(errno);
+  }
+
+  struct termios tty;
+  if (tcgetattr(serial_fd_, &tty) != 0) {
+    close_serial();
+    throw std::string("Error getting serial attributes for ") + serial_port_;
+  }
+
+  const speed_t speed = serial_baud_to_flag(serial_baud_);
+  cfsetispeed(&tty, speed);
+  cfsetospeed(&tty, speed);
+
+  tty.c_cflag |= (CLOCAL | CREAD);
+  tty.c_cflag &= ~CSIZE;
+  tty.c_cflag |= CS8;
+  tty.c_cflag &= ~PARENB;
+  tty.c_cflag &= ~CSTOPB;
+  tty.c_cflag &= ~CRTSCTS;
+  tty.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+  tty.c_iflag &= ~(IXON | IXOFF | IXANY | INLCR | ICRNL | IGNBRK);
+  tty.c_oflag &= ~OPOST;
+  tty.c_cc[VMIN] = 0;
+  tty.c_cc[VTIME] = 0;
+
+  if (tcsetattr(serial_fd_, TCSANOW, &tty) != 0) {
+    close_serial();
+    throw std::string("Error setting serial attributes for ") + serial_port_;
+  }
+
+  connected_product_id_ = X20P_UART1_PRODUCT_ID;
+  driver_state_ = USBDriverState::CONNECTED;
+  attached_ = true;
+
+  if (debug_cb_fn_) {
+    std::ostringstream oss;
+    oss << "serial port opened: " << serial_port_ << " @ " << serial_baud_;
+    (debug_cb_fn_)(oss.str());
+  }
+
+  return true;
+}
+
+void Connection::close_serial()
+{
+  if (serial_fd_ >= 0) {
+    ::close(serial_fd_);
+    serial_fd_ = -1;
+  }
+  attached_ = false;
+  driver_state_ = USBDriverState::DISCONNECTED;
+}
+
+void Connection::emit_serial_frame(const unsigned char * data, size_t len)
+{
+  if (len == 0) {
+    return;
+  }
+
+  if (in_raw_cb_fn_) {
+    serial_in_buffer_.assign(data, data + len);
+    in_raw_cb_fn_(serial_in_buffer_.data(), len);
+    return;
+  }
+
+  if (!in_cb_fn_) {
+    return;
+  }
+
+  if (len >= IN_BUFFER_SIZE) {
+    len = IN_BUFFER_SIZE - 2;
+  }
+
+  serial_scratch_.resize(sizeof(libusb_transfer) + IN_BUFFER_SIZE);
+  auto * transfer = reinterpret_cast<libusb_transfer *>(serial_scratch_.data());
+  auto * buf = reinterpret_cast<unsigned char *>(transfer + 1);
+
+  memcpy(buf, data, len);
+  buf[len] = 0;
+
+  transfer->buffer = buf;
+  transfer->actual_length = static_cast<int>(len);
+  transfer->status = LIBUSB_TRANSFER_COMPLETED;
+  in_cb_fn_(transfer);
+}
+
+void Connection::deliver_serial_in(const unsigned char * data, size_t len)
+{
+  if (len == 0) {
+    return;
+  }
+
+  serial_rx_accum_.insert(serial_rx_accum_.end(), data, data + len);
+
+  static constexpr unsigned char UBX_SYNC_1 = 0xB5;
+  static constexpr unsigned char UBX_SYNC_2 = 0x62;
+  static constexpr size_t kMaxAccum = 65536;
+
+  size_t consumed = 0;
+  while (consumed < serial_rx_accum_.size()) {
+    const unsigned char lead = serial_rx_accum_[consumed];
+
+    if (lead == '$') {
+      size_t end = consumed;
+      while (end < serial_rx_accum_.size() &&
+        serial_rx_accum_[end] != '\n' && serial_rx_accum_[end] != '\r')
+      {
+        ++end;
+      }
+      if (end >= serial_rx_accum_.size()) {
+        break;
+      }
+      while (end < serial_rx_accum_.size() &&
+        (serial_rx_accum_[end] == '\n' || serial_rx_accum_[end] == '\r'))
+      {
+        ++end;
+      }
+      emit_serial_frame(&serial_rx_accum_[consumed], end - consumed);
+      consumed = end;
+      continue;
+    }
+
+    if (lead == UBX_SYNC_1) {
+      if (consumed + 1 >= serial_rx_accum_.size()) {
+        break;
+      }
+      if (serial_rx_accum_[consumed + 1] != UBX_SYNC_2) {
+        ++consumed;
+        continue;
+      }
+      if (consumed + 6 > serial_rx_accum_.size()) {
+        break;
+      }
+      const uint16_t payload_len =
+        static_cast<uint16_t>(serial_rx_accum_[consumed + 4]) |
+        (static_cast<uint16_t>(serial_rx_accum_[consumed + 5]) << 8);
+      const size_t frame_len = 8 + payload_len;
+      if (consumed + frame_len > serial_rx_accum_.size()) {
+        break;
+      }
+      emit_serial_frame(&serial_rx_accum_[consumed], frame_len);
+      consumed += frame_len;
+      continue;
+    }
+
+    if (lead == 0xD3) {
+      if (consumed + 3 > serial_rx_accum_.size()) {
+        break;
+      }
+      const uint16_t payload_len =
+        (static_cast<uint16_t>(serial_rx_accum_[consumed + 1] & 0x03) << 8) |
+        static_cast<uint16_t>(serial_rx_accum_[consumed + 2]);
+      const size_t frame_len = 3 + payload_len + 3;
+      if (consumed + frame_len > serial_rx_accum_.size()) {
+        break;
+      }
+      emit_serial_frame(&serial_rx_accum_[consumed], frame_len);
+      consumed += frame_len;
+      continue;
+    }
+
+    ++consumed;
+  }
+
+  if (consumed > 0) {
+    serial_rx_accum_.erase(serial_rx_accum_.begin(),
+      serial_rx_accum_.begin() + static_cast<std::ptrdiff_t>(consumed));
+  }
+
+  if (serial_rx_accum_.size() > kMaxAccum) {
+    serial_rx_accum_.clear();
+  }
 }
 
 bool Connection::open_device()
@@ -550,6 +765,21 @@ void Connection::write_char(u_char c)
 
 void Connection::write_buffer(u_char * buf, size_t size)
 {
+  if (use_serial_) {
+    if (serial_fd_ < 0) {
+      throw UsbException("Serial port not open");
+    }
+    const std::lock_guard<std::mutex> lock(write_mutex_);
+    ssize_t written = ::write(serial_fd_, buf, size);
+    if (written < 0) {
+      throw UsbException(std::string("Serial write failed: ") + std::strerror(errno));
+    }
+    if (static_cast<size_t>(written) != size) {
+      throw UsbException("Serial write incomplete");
+    }
+    return;
+  }
+
   if (debug_cb_fn_) {
     std::ostringstream oss;
     oss << "write_buffer: sending " << size << " bytes to endpoint 0x"
@@ -724,6 +954,19 @@ void Connection::write_buffer_async(u_char * buf, size_t size, void * user_data)
     throw UsbException("No exception callback function set");
   }
 
+  if (use_serial_) {
+    write_buffer(buf, size);
+    serial_scratch_.resize(sizeof(libusb_transfer) + size);
+    auto * transfer = reinterpret_cast<libusb_transfer *>(serial_scratch_.data());
+    auto * xfer_buf = reinterpret_cast<unsigned char *>(transfer + 1);
+    memcpy(xfer_buf, buf, size);
+    transfer->buffer = xfer_buf;
+    transfer->status = LIBUSB_TRANSFER_COMPLETED;
+    transfer->actual_length = static_cast<int>(size);
+    out_cb_fn_(transfer);
+    return;
+  }
+
   auto transfer_out = make_transfer_out(buf, size);
   submit_transfer(transfer_out, "async submit transfer out: ");
 }
@@ -892,6 +1135,10 @@ void Connection::cleanup_all_transfers()
 
 size_t Connection::queued_transfer_in_num()
 {
+  if (use_serial_) {
+    return 0;
+  }
+
   if (transfer_queue_.size() == 0) {return 0;}
 
   const std::lock_guard<std::mutex> lock(transfer_queue_mutex_);
@@ -909,6 +1156,21 @@ size_t Connection::queued_transfer_in_num()
 
 void Connection::init_async()
 {
+  if (use_serial_) {
+    if (serial_fd_ < 0) {
+      throw UsbException("Serial port not open");
+    }
+    if ((in_cb_fn_ == nullptr && in_raw_cb_fn_ == nullptr) || out_cb_fn_ == nullptr ||
+      exception_cb_fn_ == nullptr || debug_cb_fn_ == nullptr)
+    {
+      throw UsbException("Serial callbacks not configured");
+    }
+    if (debug_cb_fn_) {
+      (debug_cb_fn_)("init_async: serial transport ready");
+    }
+    return;
+  }
+
   if (devh_ == nullptr) {
     throw UsbException("No device handle set");
   }
@@ -940,6 +1202,25 @@ void Connection::handle_usb_events()
 {
   if (!keep_running_) {return;}
 
+  if (use_serial_) {
+    if (serial_fd_ < 0 || !attached_) {
+      return;
+    }
+
+    unsigned char buf[IN_BUFFER_SIZE];
+    while (keep_running_ && attached_) {
+      const ssize_t n = ::read(serial_fd_, buf, sizeof(buf));
+      if (n > 0) {
+        deliver_serial_in(buf, static_cast<size_t>(n));
+      } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        break;
+      } else {
+        break;
+      }
+    }
+    return;
+  }
+
   // don’t call into libusb until init() has succeeded
   if (ctx_ == nullptr) {return;}
 
@@ -970,6 +1251,11 @@ void Connection::handle_usb_events()
 
 void Connection::close_devh()
 {
+  if (use_serial_) {
+    close_serial();
+    return;
+  }
+
   // Clean up all pending transfers before closing device
   cleanup_transfer_queue();  // completed
   cleanup_all_transfers();  // any remaining
@@ -990,6 +1276,11 @@ void Connection::shutdown()
 {
   keep_running_ = false;
 
+  if (use_serial_) {
+    close_serial();
+    return;
+  }
+
   // de register hotplug callbacks
   for (auto handle : hp_attach_) {
     if (handle) {
@@ -1009,6 +1300,9 @@ Connection::~Connection()
 {
   shutdown();
 
-  libusb_exit(ctx_);
+  if (ctx_ != nullptr) {
+    libusb_exit(ctx_);
+    ctx_ = nullptr;
+  }
 }
 }  // namespace usb

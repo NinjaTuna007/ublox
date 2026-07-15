@@ -22,10 +22,12 @@ class StickSmarcPublisher(Node):
         self.declare_parameter('fix_topic', 'ublox_nav_sat_fix_hp/fix')
         self.declare_parameter('velned_topic', 'ubx_nav_vel_ned')
         self.declare_parameter('status_topic', 'ubx_nav_status')
+        self.declare_parameter('nmea_heading_topic', 'gnss_nmea_heading')
 
         fix_topic = self.get_parameter('fix_topic').value
         velned_topic = self.get_parameter('velned_topic').value
         status_topic = self.get_parameter('status_topic').value
+        nmea_heading_topic = self.get_parameter('nmea_heading_topic').value
 
         gps_qos = QoSProfile(
             depth=10,
@@ -39,6 +41,8 @@ class StickSmarcPublisher(Node):
             UBXNavVelNED, velned_topic, self.velned_callback, gps_qos)
         self.status_sub = self.create_subscription(
             UBXNavStatus, status_topic, self.status_callback, gps_qos)
+        self.nmea_heading_sub = self.create_subscription(
+            Float32, nmea_heading_topic, self.nmea_heading_callback, gps_qos)
 
         self.latlon_pub = self.create_publisher(GeoPoint, 'smarc/latlon', 10)
         self.altitude_pub = self.create_publisher(Float32, 'smarc/altitude', 10)
@@ -46,6 +50,7 @@ class StickSmarcPublisher(Node):
         self.heading_pub = self.create_publisher(Float32, 'smarc/heading', 10)
 
         self._rtk_active = False
+        self._velned_seen = False
         self.get_logger().info('Stick SMARC publisher initialized')
 
     def status_callback(self, msg: UBXNavStatus):
@@ -70,6 +75,7 @@ class StickSmarcPublisher(Node):
                 f'RTK active in ubx_nav_status but NavSatFix status={msg.status.status}')
 
     def velned_callback(self, msg: UBXNavVelNED):
+        self._velned_seen = True
         vel_n = msg.vel_n * 1e-3
         vel_e = msg.vel_e * 1e-3
         vel_d = msg.vel_d * 1e-3
@@ -92,6 +98,11 @@ class StickSmarcPublisher(Node):
         heading_msg = Float32()
         heading_msg.data = float(heading_rad)
         self.heading_pub.publish(heading_msg)
+
+    def nmea_heading_callback(self, msg: Float32):
+        if self._velned_seen:
+            return
+        self.heading_pub.publish(msg)
 
 
 def main(args=None):

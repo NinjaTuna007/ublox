@@ -27,8 +27,9 @@ msg_gen/*
 srv_gen/
 srv_gen/*
 
-# ROS GENERATED PYTHON
+# ROS GENERATED PYTHON (e.g. msg/_Foo.py) — do not ignore package __init__.py
 _*.py
+!**/__init__.py
 _*.pyc
 
 # ROS BAG FILES

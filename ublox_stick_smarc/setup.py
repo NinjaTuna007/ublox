@@ -19,6 +19,7 @@ setup(
     entry_points={
         'console_scripts': [
             'stick_smarc_publisher = ublox_stick_smarc.stick_smarc_publisher:main',
+            'nmea_serial_gnss = ublox_stick_smarc.nmea_serial_gnss:main',
         ],
     },
 )

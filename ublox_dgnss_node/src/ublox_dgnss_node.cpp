@@ -21,7 +21,7 @@
 #include <memory>
 #include <optional>
 #include <vector>
-#include <map>
+#include <mutex>
 #include <algorithm>
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp_components/register_node_macro.hpp"
@@ -30,6 +30,7 @@
 #include "ublox_dgnss_node/usb.hpp"
 #include "ublox_dgnss_node/parameters.hpp"
 #include "ublox_dgnss_node/device_family.hpp"
+#include "ublox_dgnss_node/gps_time.hpp"
 #include "ublox_dgnss_node/ubx/ubx_config_loader.hpp"
 #include "ublox_dgnss_node/ubx/ubx_cfg.hpp"
 #include "ublox_dgnss_node/ubx/ubx_mon.hpp"
@@ -79,6 +80,10 @@
 #include "ublox_ubx_interfaces/srv/reset_odo.hpp"
 
 #include "rtcm_msgs/msg/message.hpp"
+#include "std_msgs/msg/float32.hpp"
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
 
 using namespace std::chrono_literals;
 using std::placeholders::_1;
@@ -158,6 +163,7 @@ public:
     check_for_device_family_param(parameters_client);
     check_for_ubx_config_file_param(parameters_client);
     check_for_device_serial_param(parameters_client);
+    check_for_serial_transport_param(parameters_client);
     check_for_frame_id_param(parameters_client);
 
     if (!has_parameter("RTCM_REPUBLISH_ENABLED")) {
@@ -193,6 +199,15 @@ public:
         continue;
       }
       if (strcmp(name.c_str(), DEVICE_FAMILY_PARAM_NAME.c_str()) == 0) {
+        continue;
+      }
+      if (strcmp(name.c_str(), DEVICE_TRANSPORT_PARAM_NAME.c_str()) == 0) {
+        continue;
+      }
+      if (strcmp(name.c_str(), SERIAL_PORT_PARAM_NAME.c_str()) == 0) {
+        continue;
+      }
+      if (strcmp(name.c_str(), SERIAL_BAUD_PARAM_NAME.c_str()) == 0) {
         continue;
       }
       // ignore other parameters that don't start with "CFG"
@@ -271,6 +286,8 @@ public:
       "ubx_nav_vel_ecef", qos, pub_options);
     ubx_nav_vel_ned_pub_ = this->create_publisher<ublox_ubx_msgs::msg::UBXNavVelNED>(
       "ubx_nav_vel_ned", qos, pub_options);
+    gnss_nmea_heading_pub_ = this->create_publisher<std_msgs::msg::Float32>(
+      "gnss_nmea_heading", 10);
     ubx_rxm_cor_pub_ = this->create_publisher<ublox_ubx_msgs::msg::UBXRxmCor>(
       "ubx_rxm_cor", qos, pub_options);
     if (ubx_rxm_rtcm_enabled_) {
@@ -329,6 +346,9 @@ public:
     usb::connection_in_cb_fn connection_in_callback = std::bind(
       &UbloxDGNSSNode::ublox_in_callback,
       this, _1);
+    usb::connection_in_raw_cb_fn connection_in_raw_callback = std::bind(
+      &UbloxDGNSSNode::ublox_in_raw_callback,
+      this, _1, _2);
     usb::connection_out_cb_fn connection_out_callback = std::bind(
       &UbloxDGNSSNode::ublox_out_callback, this, _1);
     usb::connection_exception_cb_fn connection_exception_callback = std::bind(
@@ -343,15 +363,20 @@ public:
     // Device family-aware USB connection creation
     auto device_info = ublox_dgnss::get_device_family_info(device_family_);
     RCLCPP_DEBUG(
-      get_logger(), "Make USB Connection - Device: %s, Product IDs: %zu, Serial: '%s'",
+      get_logger(), "Make %s Connection - Device: %s, Product IDs: %zu, Serial: '%s'",
+      device_transport_ == "serial" ? "serial" : "USB",
       device_info.description.c_str(), device_info.product_ids.size(),
       serial_str_.c_str());
+    const std::string serial_port_arg =
+      device_transport_ == "serial" ? serial_port_path_ : "";
     usbc_ = std::make_shared<usb::Connection>(
       U_BLOX_AG_VENDOR_ID, device_info.product_ids,
-      serial_str_, device_family_);
+      serial_str_, device_family_, LIBUSB_LOG_LEVEL_NONE,
+      serial_port_arg, serial_baud_rate_);
 
     RCLCPP_DEBUG(get_logger(), "setting up usb callbacks ...");
     usbc_->set_in_callback(connection_in_callback);
+    usbc_->set_in_raw_callback(connection_in_raw_callback);
     usbc_->set_out_callback(connection_out_callback);
     usbc_->set_exception_callback(connection_exception_callback);
     usbc_->set_hotplug_attach_callback(usb_hotplug_attach_callback);
@@ -683,11 +708,15 @@ private:
   // (reset when the USB reconnects/attaches so the next detach logs once again)
   bool usb_param_disconnected_logged_ = false;
   mutable bool usb_rtcm_detached_logged_ = false;
+  std::vector<unsigned char> in_scratch_;
   bool rtcm_republish_enabled_ = false;
   bool ubx_rxm_rtcm_enabled_ = false;
   mutable bool usb_pmp_detached_logged_ = false;
   mutable bool usb_qzssl6_detached_logged_ = false;
   mutable bool usb_spartnkey_detached_logged_ = false;
+  GpsTimeAnchor gps_time_anchor_;
+  mutable std::mutex gps_time_mutex_;
+  bool gps_time_anchor_logged_ = false;
   static constexpr auto PARAM_FETCH_TIMEOUT = std::chrono::seconds(5);
 
   std::string frame_id_;
@@ -695,6 +724,13 @@ private:
 
   std::string serial_str_;
   const std::string DEV_STRING_PARAM_NAME = "DEVICE_SERIAL_STRING";
+
+  std::string device_transport_ = "usb";
+  const std::string DEVICE_TRANSPORT_PARAM_NAME = "DEVICE_TRANSPORT";
+  std::string serial_port_path_;
+  const std::string SERIAL_PORT_PARAM_NAME = "SERIAL_PORT";
+  uint32_t serial_baud_rate_ = 38400;
+  const std::string SERIAL_BAUD_PARAM_NAME = "SERIAL_BAUD";
 
   ublox_dgnss::DeviceFamily device_family_;
   std::string device_family_str_;
@@ -727,6 +763,7 @@ private:
   rclcpp::Publisher<ublox_ubx_msgs::msg::UBXNavTimeUTC>::SharedPtr ubx_nav_time_utc_pub_;
   rclcpp::Publisher<ublox_ubx_msgs::msg::UBXNavVelECEF>::SharedPtr ubx_nav_vel_ecef_pub_;
   rclcpp::Publisher<ublox_ubx_msgs::msg::UBXNavVelNED>::SharedPtr ubx_nav_vel_ned_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr gnss_nmea_heading_pub_;
   rclcpp::Publisher<ublox_ubx_msgs::msg::UBXRxmCor>::SharedPtr ubx_rxm_cor_pub_;
   rclcpp::Publisher<ublox_ubx_msgs::msg::UBXRxmRTCM>::SharedPtr ubx_rxm_rtcm_pub_;
   rclcpp::Publisher<ublox_ubx_msgs::msg::UBXRxmMeasx>::SharedPtr ubx_rxm_measx_pub_;
@@ -815,6 +852,45 @@ private:
   }
 
   UBLOX_DGNSS_NODE_LOCAL
+  void check_for_serial_transport_param(rclcpp::SyncParametersClient::SharedPtr param_client)
+  {
+    device_transport_ = "usb";
+    serial_port_path_.clear();
+    serial_baud_rate_ = 38400;
+
+    if (!param_client->has_parameter(DEVICE_TRANSPORT_PARAM_NAME)) {
+      return;
+    }
+
+    device_transport_ = param_client->get_parameter<std::string>(DEVICE_TRANSPORT_PARAM_NAME);
+    std::transform(
+      device_transport_.begin(), device_transport_.end(), device_transport_.begin(), ::tolower);
+
+    if (device_transport_ != "serial") {
+      device_transport_ = "usb";
+      return;
+    }
+
+    if (!param_client->has_parameter(SERIAL_PORT_PARAM_NAME)) {
+      RCLCPP_ERROR(
+        get_logger(), "DEVICE_TRANSPORT=serial requires parameter %s",
+        SERIAL_PORT_PARAM_NAME.c_str());
+      rclcpp::shutdown();
+      return;
+    }
+
+    serial_port_path_ = param_client->get_parameter<std::string>(SERIAL_PORT_PARAM_NAME);
+    if (param_client->has_parameter(SERIAL_BAUD_PARAM_NAME)) {
+      serial_baud_rate_ = static_cast<uint32_t>(
+        param_client->get_parameter<int64_t>(SERIAL_BAUD_PARAM_NAME));
+    }
+
+    RCLCPP_INFO(
+      get_logger(), "Serial transport enabled on %s @ %u baud",
+      serial_port_path_.c_str(), serial_baud_rate_);
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
   void check_for_frame_id_param(rclcpp::SyncParametersClient::SharedPtr param_client)
   {
     // default to ubx
@@ -886,6 +962,16 @@ private:
   {
     if (!usbc_) {
       RCLCPP_WARN(this->get_logger(), "USB connection object is null");
+      return;
+    }
+
+    if (usbc_->use_serial()) {
+      RCLCPP_INFO(
+        this->get_logger(),
+        "serial transport: port=%s baud=%u product_id: 0x%04x",
+        usbc_->serial_port().c_str(),
+        usbc_->serial_baud(),
+        usbc_->product_id());
       return;
     }
 
@@ -1590,103 +1676,144 @@ public:
 
 // handle host in from ublox gps to host callback
   UBLOX_DGNSS_NODE_LOCAL
+  void update_gps_time_anchor(uint32_t itow_ms, int64_t unix_ns)
+  {
+    const std::lock_guard<std::mutex> lock(gps_time_mutex_);
+    gps_time_anchor_.valid = true;
+    gps_time_anchor_.itow_ms = itow_ms;
+    gps_time_anchor_.unix_ns = unix_ns;
+    if (!gps_time_anchor_logged_) {
+      RCLCPP_INFO(get_logger(), "GPS receiver time anchor locked (iTOW=%u)", itow_ms);
+      gps_time_anchor_logged_ = true;
+    }
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  rclcpp::Time receiver_stamp_from_itow(uint32_t itow_ms, const rclcpp::Time & host_fallback)
+  {
+    const std::lock_guard<std::mutex> lock(gps_time_mutex_);
+    const int64_t ns = stamp_ns_from_itow(gps_time_anchor_, itow_ms);
+    if (ns > 0) {
+      return rclcpp::Time(ns);
+    }
+    return host_fallback;
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  float parse_nmea_course_rad(const char * sentence, int target_field)
+  {
+    const char * p = sentence;
+    int field = 0;
+    while (field < target_field && *p != '\0') {
+      if (*p == ',') {
+        ++field;
+      }
+      ++p;
+    }
+    if (field != target_field || *p == '\0' || *p == ',') {
+      return NAN;
+    }
+    char * end = nullptr;
+    const double course_deg = std::strtod(p, &end);
+    if (end == p || !std::isfinite(course_deg)) {
+      return NAN;
+    }
+    return static_cast<float>(course_deg * M_PI / 180.0);
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  void publish_nmea_heading_if_present(const char * sentence)
+  {
+    float heading_rad = NAN;
+    if (strncmp(sentence, "$GNVTG", 6) == 0) {
+      heading_rad = parse_nmea_course_rad(sentence, 1);
+    } else if (strncmp(sentence, "$GNRMC", 6) == 0) {
+      heading_rad = parse_nmea_course_rad(sentence, 8);
+    }
+    if (!std::isfinite(heading_rad)) {
+      return;
+    }
+    std_msgs::msg::Float32 msg;
+    msg.data = heading_rad;
+    gnss_nmea_heading_pub_->publish(msg);
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  void process_ublox_in_buffer(unsigned char * buf, size_t len)
+  {
+    rclcpp::Time ts = rclcpp::Clock().now();
+    const char * remove_any_of = "\n\r";
+
+    if (len == 0) {
+      RCLCPP_DEBUG(get_logger(), "in - buf len is zero");
+      return;
+    }
+
+    // NMEA string starts with a $
+    if (buf[0] == 0x24) {
+      in_scratch_.resize(len + 1);
+      memcpy(in_scratch_.data(), buf, len);
+      in_scratch_[len] = 0;
+      for (size_t i = len > 2 ? len - 2 : 0; i < len; i++) {
+        if (strchr(remove_any_of, in_scratch_[i])) {
+          in_scratch_[i] = 0;
+        }
+      }
+      RCLCPP_DEBUG(get_logger(), "nmea: %s", in_scratch_.data());
+      publish_nmea_heading_if_present(reinterpret_cast<const char *>(in_scratch_.data()));
+      return;
+    }
+
+    // UBX starts with 0xB5 0x62
+    if (len > 2 && buf[0] == ubx::UBX_SYNC_CHAR_1 && buf[1] == ubx::UBX_SYNC_CHAR_2) {
+      auto frame = std::make_shared<ubx::Frame>();
+      frame->buf.reserve(len);
+      frame->buf.resize(len);
+      memcpy(frame->buf.data(), &buf[0], len);
+      frame->from_buf_build();
+      ubx_queue_frame_t queue_frame {ts, frame, FrameType::frame_in};
+      {
+        const std::lock_guard<std::mutex> lock(ubx_queue_mutex_);
+        ubx_queue_.push_back(queue_frame);
+      }
+    } else if (len > 2 && buf[0] == 0xD3 && buf[1] == 0x00) {
+      std::vector<uint8_t> frame_buf;
+      frame_buf.reserve(len);
+      frame_buf.resize(len);
+      memcpy(frame_buf.data(), &buf[0], len);
+      rtcm_queue_frame_t queue_frame {ts, frame_buf, FrameType::frame_in};
+      {
+        const std::lock_guard<std::mutex> lock(rtcm_queue_mutex_);
+        rtcm_queue_.push_back(queue_frame);
+      }
+    }
+
+    std::ostringstream os;
+    os << "0x";
+    for (size_t i = 0; i < len; i++) {
+      os << std::setfill('0') << std::setw(2) << std::right << std::hex << +buf[i];
+    }
+    RCLCPP_DEBUG(get_logger(), "in - buf: %s", os.str().c_str());
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
   void ublox_in_callback(libusb_transfer * transfer_in)
   {
     RCLCPP_DEBUG_ONCE(get_logger(), "initial ublox_in_callback from usb ..");
-
-    rclcpp::Time ts = rclcpp::Clock().now();
-
-    const char * remove_any_of = "\n\r";
-
-    size_t len = transfer_in->actual_length;
-    unsigned char * buf = transfer_in->buffer;
-
-    /* TODO: Review - Header stripping code no longer needed since UART1/UART2 interfaces are blocked
-    // Strip 2-byte status headers from X20P UART1/UART2 vendor-specific interfaces
-    std::vector<uint8_t> payload;
-    if ((usbc_->product_id() == 0x050c || usbc_->product_id() == 0x050d) &&
-        len > 0) {
-      const size_t mps = 64;  // Known max packet size for these interfaces
-      payload.reserve(len);
-
-      size_t off = 0;
-      while (off < len) {
-        const size_t chunk = std::min(mps, len - off);
-        if (chunk > 2) {
-          // Skip the first two status bytes, copy the rest of this USB packet
-          payload.insert(payload.end(), buf + off + 2, buf + off + chunk);
-        }
-        // If chunk <= 2, packet contained only status—nothing to copy
-        off += chunk;
-      }
-
-      if (!payload.empty()) {
-        // Use cleaned payload for processing
-        buf = payload.data();
-        len = payload.size();
-      } else {
-        // No payload data, skip processing
-        len = 0;
-      }
-    }
-    */
-
-    if (len > 0) {
-      // NMEA string starts with a $
-      if (buf[0] == 0x24) {
-        buf[len] = 0;
-        for (size_t i = len - 2; i < len; i++) {
-          if (strchr(remove_any_of, buf[i])) {
-            buf[i] = 0;
-          }
-        }
-        RCLCPP_INFO(get_logger(), "nmea: %s", buf);
-      } else {
-        // UBX starts with 0x65 0x62
-        if (len > 2 && buf[0] == ubx::UBX_SYNC_CHAR_1 && buf[1] == ubx::UBX_SYNC_CHAR_2) {
-          auto frame = std::make_shared<ubx::Frame>();
-          frame->buf.reserve(len);
-          frame->buf.resize(len);
-          memcpy(frame->buf.data(), &buf[0], len);
-          frame->from_buf_build();
-          ubx_queue_frame_t queue_frame {ts, frame, FrameType::frame_in};
-          {
-            const std::lock_guard<std::mutex> lock(ubx_queue_mutex_);
-            ubx_queue_.push_back(queue_frame);
-          }
-
-          // RTCM3 messages start with a 0xD3 for preamble, followed by 0x00
-        } else {
-          if (len > 2 && buf[0] == 0xD3 && buf[1] == 0x00) {
-            std::vector<uint8_t> frame_buf;
-            frame_buf.reserve(len);
-            frame_buf.resize(len);
-            memcpy(frame_buf.data(), &buf[0], len);
-            rtcm_queue_frame_t queue_frame {ts, frame_buf, FrameType::frame_in};
-            {
-              const std::lock_guard<std::mutex> lock(rtcm_queue_mutex_);
-              rtcm_queue_.push_back(queue_frame);
-            }
-          }
-        }
-
-        std::ostringstream os;
-        os << "0x";
-        for (size_t i = 0; i < len; i++) {
-          os << std::setfill('0') << std::setw(2) << std::right << std::hex << +buf[i];
-        }
-
-        RCLCPP_DEBUG(get_logger(), "in - buf: %s", os.str().c_str());
-      }
-    } else {
-      RCLCPP_DEBUG(get_logger(), "in - buf len is zero");
-    }
+    process_ublox_in_buffer(transfer_in->buffer, transfer_in->actual_length);
 
     size_t num_transfer_in_queued = usbc_->queued_transfer_in_num();
     if (num_transfer_in_queued > 1) {
       RCLCPP_WARN(
         get_logger(), "too many transfer in transfers are queued (%lu)", num_transfer_in_queued);
     }
+  }
+
+  UBLOX_DGNSS_NODE_LOCAL
+  void ublox_in_raw_callback(unsigned char * buf, size_t len)
+  {
+    RCLCPP_DEBUG_ONCE(get_logger(), "initial ublox_in_raw_callback from serial ..");
+    process_ublox_in_buffer(buf, len);
   }
 
 // handle out to ublox gps device to host callback
@@ -2919,7 +3046,7 @@ private:
 
     auto msg = std::make_unique<ublox_ubx_msgs::msg::UBXNavVelNED>();
     msg->header.frame_id = frame_id_;
-    msg->header.stamp = f->ts;
+    msg->header.stamp = receiver_stamp_from_itow(payload->iTOW, f->ts);
     msg->itow = payload->iTOW;
     msg->vel_n = payload->velN;
     msg->vel_e = payload->velE;
@@ -2945,7 +3072,19 @@ private:
 
     auto msg = std::make_unique<ublox_ubx_msgs::msg::UBXNavTimeUTC>();
     msg->header.frame_id = frame_id_;
-    msg->header.stamp = f->ts;
+    if (payload->valid.bits.validUTC && payload->valid.bits.validTOW) {
+      const int64_t unix_ns = utc_fields_to_unix_ns(
+        payload->year, payload->month, payload->day,
+        payload->hour, payload->min, payload->sec, payload->nano);
+      if (unix_ns > 0) {
+        msg->header.stamp = rclcpp::Time(unix_ns);
+        update_gps_time_anchor(payload->iTOW, unix_ns);
+      } else {
+        msg->header.stamp = f->ts;
+      }
+    } else {
+      msg->header.stamp = receiver_stamp_from_itow(payload->iTOW, f->ts);
+    }
     msg->itow = payload->iTOW;
     msg->t_acc = payload->tAcc;
     msg->nano = payload->nano;
@@ -3285,7 +3424,7 @@ private:
       payload->to_string().c_str());
     auto msg = std::make_unique<ublox_ubx_msgs::msg::UBXNavHPPosLLH>();
     msg->header.frame_id = frame_id_;
-    msg->header.stamp = f->ts;
+    msg->header.stamp = receiver_stamp_from_itow(payload->iTOW, f->ts);
     msg->version = payload->version;
     msg->invalid_lon = payload->flags.bits.invalid_lon;
     msg->invalid_lat = payload->flags.bits.invalid_lat;
@@ -3354,7 +3493,7 @@ private:
 
     auto msg = std::make_unique<ublox_ubx_msgs::msg::UBXNavStatus>();
     msg->header.frame_id = frame_id_;
-    msg->header.stamp = f->ts;
+    msg->header.stamp = receiver_stamp_from_itow(payload->iTOW, f->ts);
     msg->itow = payload->iTOW;
     msg->gps_fix.fix_type = payload->gpsFix;
     msg->gps_fix_ok = payload->flags.bits.gpsFixOK;
@@ -3371,6 +3510,19 @@ private:
     msg->msss = payload->msss;
 
     ubx_nav_status_pub_->publish(*msg);
+
+    const char * carr_soln_txt = "unknown";
+    switch (msg->carr_soln.status) {
+      case 0: carr_soln_txt = "none"; break;
+      case 1: carr_soln_txt = "float"; break;
+      case 2: carr_soln_txt = "fixed"; break;
+      default: break;
+    }
+    RCLCPP_INFO_THROTTLE(
+      get_logger(), *get_clock(), 10000,
+      "GNSS status: fix_type=%u gps_fix_ok=%d diff_soln=%d carr_soln=%s carr_soln_valid=%d",
+      msg->gps_fix.fix_type, msg->gps_fix_ok, msg->diff_soln,
+      carr_soln_txt, msg->carr_soln_valid);
   }
 
   UBLOX_DGNSS_NODE_LOCAL
@@ -3458,7 +3610,7 @@ private:
 
     auto msg = std::make_unique<ublox_ubx_msgs::msg::UBXNavCov>();
     msg->header.frame_id = frame_id_;
-    msg->header.stamp = f->ts;
+    msg->header.stamp = receiver_stamp_from_itow(payload->iTOW, f->ts);
     msg->itow = payload->iTOW;
     msg->version = payload->version;
     msg->pos_cor_valid = static_cast<bool>(payload->posCorValid);
