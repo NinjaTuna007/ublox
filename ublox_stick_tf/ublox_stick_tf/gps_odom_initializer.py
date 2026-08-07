@@ -24,7 +24,7 @@ class GpsOdomInitializer(Node):
         self.declare_parameter('verbose', False)
         self.declare_parameter('modem_x_offset', 0.0)
         self.declare_parameter('modem_y_offset', 0.0)
-        self.declare_parameter('modem_z_offset', -1.57)
+        self.declare_parameter('modem_z_offset', -2.4)
 
         self.frame_prefix = self.get_parameter('frame_prefix').value
         latlon_topic = self.get_parameter('latlon_topic').value

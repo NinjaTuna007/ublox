@@ -20,12 +20,12 @@ For a bench setup with the X20P on **direct USB** (no Teensy), set `GPS_BACKEND=
 
 ```mermaid
 flowchart LR
-  NTRIP["NTRIP client"] -->|"/ntrip_client/rtcm"| DGNSS["ublox_dgnss"]
+  NTRIP["NTRIP client"] -->|"/stick_N/ntrip_client/rtcm"| DGNSS["ublox_dgnss"]
   DGNSS --> FIX["NavSatFix + UBX msgs"]
   FIX --> SMARC["ublox_stick_smarc"]
   SMARC --> TF["ublox_stick_tf"]
   SMARC --> WARAPS["wasp_bt agent"]
-  PVPTU["pvptu stick_1 only"] --> RELAY["sound_velocity_relay"]
+  PVPTU["pvptu sensor stick only"] --> RELAY["sound_velocity_relay"]
   RELAY --> WARAPS
   WARAPS --> MQTT["waraps_level1 bridge"]
 ```
@@ -36,7 +36,7 @@ flowchart LR
 
 | Package | Plain English |
 |---------|---------------|
-| `ntrip_client_node` | Downloads RTCM correction data from the internet and publishes it on `/ntrip_client/rtcm` |
+| `ntrip_client_node` | Downloads RTCM correction data from the internet and publishes it on `/<robot>/ntrip_client/rtcm` |
 | `ublox_dgnss_node` | Driver for the ZED-X20P (USB or serial); injects RTCM, configures the receiver |
 | `ublox_nav_sat_fix_hp_node` | Turns high-precision UBX position into `sensor_msgs/NavSatFix` |
 | `ublox_stick_smarc` | Publishes `smarc/latlon`, `smarc/speed`, `smarc/heading` |
@@ -52,8 +52,10 @@ flowchart LR
 ### Hardware
 
 **Stick fleet (default):** u-blox **ZED-X20P** UART routed through a **Teensy 4.1** GNSS bridge:
-- Teensy `SerialUSB1` → `/dev/ttyACM1` @ **38400 baud** (UBX + RTCM + interleaved NMEA)
-- Teensy `Serial` (LoLo) → `/dev/ttyACM0` (not used by this GPS stack)
+- Teensy `SerialUSB1` → `/dev/serial/by-id/…-if02` (usually `/dev/ttyACM1`) — transparent UBX + RTCM + NMEA bridge
+- Teensy UART to X20P: boot **38400**, then firmware RAM-bumps to **921600**
+- Host `serial_ubx` open baud defaults to **115200** (USB CDC line coding; Dual Serial data path is the bridge)
+- Teensy `Serial` (LoLo) → `…-if00` (usually `/dev/ttyACM0`) @ **115200** — Succorfish / OWTT host protocol
 
 **Bench / dev (optional):** X20P on direct USB (`1546:01ab`) — use `GPS_BACKEND=usb`.
 
@@ -77,7 +79,9 @@ ros2 run ublox_stick_bringup install_ublox_udev.sh
 # Unplug/replug the GPS USB cable afterwards
 ```
 
-**3. Teensy firmware** (Stick hardware): flash the **OWTT_Modem_LOLO ver3** sketch (byte-transparent UBX passthrough on `SerialUSB1` ↔ X20P UART1 @ **38400 baud**). Without this firmware, `serial_ubx` will not work.
+**3. Teensy firmware** (Stick hardware): flash **`owtt_stick_v1`** from `succor-sketches` with Dual Serial (`teensy:avr:teensy41:usb=serial2`). The sketch opens X20P UART1 at **38400**, then RAM-bumps to **921600**, and bridges UBX/NMEA/RTCM on `SerialUSB1` (`…-if02`). Without this firmware, `serial_ubx` will not work.
+
+**New PCB / new box drill:** see [`ublox_stick_bringup/docs/NEW_BOX_BRINGUP.md`](ublox_stick_bringup/docs/NEW_BOX_BRINGUP.md) (enumerate → flash → `$ZGNSSDEBUG` probe → ROS).
 
 **4. RTK credentials** (once per machine):
 
@@ -119,7 +123,10 @@ If you are setting up a **second machine** with the same Stick hardware:
 4. Confirm `python3 -c "import ublox_stick_smarc, ublox_stick_tf"` — if this fails, ensure `__init__.py` files exist under both packages (fixed in current branch)
 5. Plug in Stick, confirm `/dev/ttyACM1` exists
 6. Run `ros2 run ublox_stick_bringup stick_bringup.sh 1` — **no env vars required** on standard Stick wiring
-7. In the `gps` tmux window, look for `Serial transport enabled on /dev/ttyACM1 @ 38400 baud` and `GPS receiver time anchor locked`
+7. In the `gps` tmux window, look for serial transport enabled on the Teensy GNSS bridge (`…-if02`) and `GPS receiver time anchor locked`
+
+For a **totally new box** (fresh PCB / Teensy / X20P), use the full drill:
+[`ublox_stick_bringup/docs/NEW_BOX_BRINGUP.md`](ublox_stick_bringup/docs/NEW_BOX_BRINGUP.md).
 
 ---
 
@@ -141,7 +148,7 @@ Replace `1` with `2` for the second stick.
 GPS_BACKEND=usb ros2 run ublox_stick_bringup stick_bringup.sh 1
 ```
 
-This opens a **tmux** session named `stick_1_bringup` (or `stick_2_bringup`).
+This opens a **tmux** session named `stick_1_bringup` (or `stick_2_bringup`, ... `stick_4_bringup`).
 
 | tmux window | What runs | stick_1 only? |
 |-------------|-----------|---------------|
@@ -149,10 +156,10 @@ This opens a **tmux** session named `stick_1_bringup` (or `stick_2_bringup`).
 | `foxglove` | Foxglove WebSocket bridge (`ws://localhost:8765`) | always |
 | `waraps` | WARAPS vehicle agent | always |
 | `mqtt` | MQTT bridge (Level-1 topics only) | always |
-| `pvptu` | Sound velocity sensor driver | **stick_1** |
-| `sound_vel` | Relays `sound_vel` → WARAPS | **stick_1** |
-| `succorfish` | Placeholder | always |
-| `serial_ping` | Placeholder | always |
+| `pvptu` | Sound velocity sensor driver → `/<robot>/smarc/sound_velocity` (Float64) | **sensor stick** (default 3) |
+| `sound_vel` | Relays `smarc/sound_velocity` → WARAPS | **sensor stick** (default 3) |
+| `succorfish` | `succorfish_driver` on `/dev/ttyACM0` @ 115200 (Teensy OWTT link) | always |
+| `serial_ping` | OWTT node: `owtt_leader` (sticks 1–2) or `owtt_follower` (sticks 3–4) | always |
 | `spare` | Empty | always |
 
 Detach from tmux: `Ctrl-b d`  
@@ -163,6 +170,95 @@ To launch without attaching (e.g. from automation):
 ```bash
 SKIP_ATTACH=1 ros2 run ublox_stick_bringup stick_bringup.sh 1
 ```
+
+### Fleet setup — 4 sticks with OWTT acoustics
+
+The bringup supports **sticks 1–4**, each with its own SWEPOS RTK account and succorfish modem identity. Mapping is fixed: **stick N ↔ modem 00N**.
+
+| Stick | Modem ID | RTK credentials | OWTT role | Node |
+|-------|----------|-----------------|-----------|------|
+| 1 | 001 | `NTRIP_USERNAME_1` / `NTRIP_PASSWORD_1` | **Broadcaster** — free-runs every 4 s | `owtt_leader_node` |
+| 2 | 002 | `NTRIP_USERNAME_2` / `NTRIP_PASSWORD_2` | **Broadcaster** — 2 s after each 001 frame | `owtt_leader_node` |
+| 3 | 003 | `NTRIP_USERNAME_3` / `NTRIP_PASSWORD_3` | **Receiver** | `owtt_follower_node` |
+| 4 | 004 | `NTRIP_USERNAME_4` / `NTRIP_PASSWORD_4` | **Receiver** | `owtt_follower_node` |
+
+On each stick's computer, fill in all four credential pairs in `rtk_credentials.env`, then launch with that stick's number:
+
+```bash
+ros2 run ublox_stick_bringup stick_bringup.sh 3   # on stick 3, etc.
+```
+
+**How it works:**
+
+- `succorfish` window: `succorfish_driver` owns the Teensy LoLo protocol port @ 115200 and bridges it to `succorfish/tx` / `succorfish/rx`. Ports are resolved via `/dev/serial/by-id/` symlinks, so `/dev/ttyACM*` renumbering after replug/flash does not break bringup.
+- `serial_ping` window on broadcasters: `owtt_leader_node` sends `$Y001T0004s` (stick 1) / `$Y002T0012s` (stick 2), waits for `#A00N` ack, then pushes GPS (`$G<lat>,<lon>` with modem lever arm applied via TF) every 1 s; the Teensy broadcasts acoustically on the PPS epoch schedule. Combined airtime: one frame every 2 s, alternating 001/002.
+- `serial_ping` window on receivers: `owtt_follower_node` sends `$Y00NR`, parses `#B`/`#I` frames, and publishes each broadcaster's position on `/<leader>/smarc/latlon` plus range on `/<leader>/distance` (leaders default to `stick_1`/`stick_2` ↔ modems `001`/`002`).
+
+**Tuning (env vars, defaults shown):**
+
+```bash
+ENABLE_OWTT=true                 # false = GPS/WARAPS only, no acoustics
+BROADCAST_INTERVAL_S=auto        # 4 for modem 001, 2 for modem 002 (PPS epochs 1-4)
+LISTEN_FOR_MODEM_ID=auto         # 001→000 (first), 002→001 (waits)
+OWTT_WORLD_FRAME=utm             # TF frame for modem lever arm
+OWTT_ROLE=auto                   # leader|follower override
+IGNORE_PPS_AFTER_S=0             # holdover experiment: ignore PPS after N s (stick 4 only)
+HAS_SVS_SENSOR=auto              # true on stick 3, false elsewhere (pvptu + sound_vel windows)
+SVS_SOURCE_ROBOT=stick_3         # which robot's /smarc/sound_velocity the follower reads
+LEADER1_NAME=stick_1 LEADER1_MODEM_ID=001
+LEADER2_NAME=stick_2 LEADER2_MODEM_ID=002
+```
+
+**Healthy broadcaster logs:** `Registered shutdown command '$Y001W'` (succorfish), then `$Y001T0004s` → `config confirmed: #A001` → `-> Teensy: '$G59.34...,18.07...'` every second (serial_ping).
+
+**Healthy receiver logs:** `$Y003R` → `#B001...` + `#I<delta_us>` lines → `/stick_1/distance` publishing.
+
+Requires `serial_ping_pkg` + `succorfish_driver` built in the workspace and the **OWTT_Modem_LOLO_ver3** Teensy sketch.
+
+#### One box per computer (sticks 1 and 2) — zero config
+
+Clone, build, fill in `rtk_credentials.env` (NTRIP only), launch. With a single Teensy plugged in, the bringup auto-picks it via the `/dev/serial/by-id/` wildcard — **no `TEENSY_USB_SERIAL` pins needed**. Don't hardcode serial paths on these machines.
+
+#### Two boxes on one computer (sticks 3 and 4, field-test layout)
+
+Two bringups run side by side in separate tmux sessions. Box ↔ stick assignment is **fluid** — boxes are interchangeable, and you can swap roles day to day. With two boxes present the bringup refuses to guess, so tell it which physical box belongs to the stick you're launching:
+
+```bash
+# 1. Plug in both boxes, then find their USB serials:
+ls /dev/serial/by-id/
+#   usb-Teensyduino_Dual_Serial_18013580-if00  <- box A LoLo
+#   usb-Teensyduino_Dual_Serial_18013580-if02  <- box A GNSS
+#   usb-Teensyduino_Dual_Serial_<serialB>-if00 <- box B ...
+
+# 2. Launch, pinning each stick to a box for that run (Foxglove port must
+#    differ — it defaults to 8765):
+TEENSY_USB_SERIAL=18013580   ros2 run ublox_stick_bringup stick_bringup.sh 3
+TEENSY_USB_SERIAL=<serialB> FOXGLOVE_PORT=8766 \
+  ros2 run ublox_stick_bringup stick_bringup.sh 4
+```
+
+If the assignment is stable for a while you can instead set `TEENSY_USB_SERIAL_3` / `TEENSY_USB_SERIAL_4` once in `rtk_credentials.env` and drop the prefix; the per-launch `TEENSY_USB_SERIAL` always wins, and `TEENSY_USB_SERIAL=any` ignores pins entirely (single-box escape hatch).
+
+Everything else is already isolated per stick: ROS topics are namespaced (`/stick_3/...` vs `/stick_4/...`), each robot has its own RTCM topic (`/stick_3/ntrip_client/rtcm`, `/stick_4/ntrip_client/rtcm`), and each tmux session gets its own name (`stick_3_bringup`, `stick_4_bringup`).
+
+For the **OCXO holdover experiment** (stick 04): the ROS side is **identical** — the full GNSS stack and NTRIP keep running; only the Teensy's timing reference changes, and that change is **firmware-configured, not hardware**. The `owtt_follower` launch sends `$ZIGNOREPPSAFTER=<seconds>` to the Teensy at startup (all other sticks send nothing / `0` = never ignore). From that many seconds after Teensy boot, the sketch stops accepting real PPS captures; `last_real_pps_us` goes stale and timing drifts into OCXO holdover 1.2 s after the last accepted PPS — exactly as if the PPS wire had been cut. Set it per launch:
+
+```bash
+IGNORE_PPS_AFTER_S=600 FOXGLOVE_PORT=8766 \
+  ros2 run ublox_stick_bringup stick_bringup.sh 4   # 10 min PPS discipline, then free-run
+```
+
+Requires the updated **OWTT_Modem_LOLO_ver3** sketch on stick 04's Teensy (older firmware replies `#IGNOREPPSAFTER,ERROR`-style garbage/ignores the command). To observe from the host:
+
+- Send `$ZIGNOREPPSAFTER?` on the LoLo port — replies `#IGNOREPPSAFTER,<n>`.
+- Send `$ZUTC?` — replies `PPS_LOCKED` → `HOLDOVER` once the deadline passes.
+- Broadcast payloads carry the timing flag: `T<unix_us>|<seq>|<P/H/W>|<holdover_hex>|...` — `P` = PPS epoch, `H` = OCXO holdover epoch, `W` = waiting for first PPS. Sending `$ZIGNOREPPSAFTER=0` re-arms: the next real PPS re-locks.
+
+So the field comparison is: stick 03's ranges stamped `P` (GPS-disciplined epochs) vs stick 04's stamped `H` (free-running OCXO) — timing drift shows up directly in the `#I<delta_us>` lines.
+
+#### Sound velocity (one sensor, all receivers)
+
+The Valeport ultraSV (`pvptu_driver`) lives on a single stick (default: **stick 3**, `HAS_SVS_SENSOR`). It publishes measured sound speed as `std_msgs/Float64` on `/<robot>/smarc/sound_velocity`; the `sound_vel` window additionally relays it to WARAPS for the cloud. Because sticks 3 and 4 share a computer (one ROS graph), **both followers read that same topic directly** — no MQTT, no republisher — via `SVS_SOURCE_ROBOT` (default `stick_3`). The follower's sound-velocity mapping is selected by `robot_name`: `lolo` keeps the legacy `svs_interfaces/msg/SVS` on `/lolo/sensors/svs`; anything else expects the plain Float64 on `/<robot_name>/smarc/sound_velocity`. If the topic is silent, the follower falls back to 1500 m/s.
 
 ### GPS stack only (no WARAPS / MQTT)
 
@@ -252,11 +348,11 @@ ros2 param get /stick_1/ublox_dgnss CFG_NAVSPG_DYNMODEL   # expect 5 (sea)
 ros2 topic hz /stick_1/smarc/latlon      # ~25 Hz
 ros2 topic hz /stick_1/smarc/heading     # ~25–100 Hz when moving
 
-# 5. Only one RTCM topic? (noise topics intentionally removed)
-ros2 topic list | grep rtcm              # only /ntrip_client/rtcm
+# 5. Only one RTCM topic per robot? (noise topics intentionally removed)
+ros2 topic list | grep rtcm              # only /stick_N/ntrip_client/rtcm
 
 # 6. RTK corrections flowing?
-ros2 topic hz /ntrip_client/rtcm         # ~1–3 Hz (bursty)
+ros2 topic hz /stick_1/ntrip_client/rtcm  # ~1–3 Hz (bursty)
 
 # 7. TF tree connected?
 ros2 run tf2_tools view_frames
@@ -271,7 +367,7 @@ ros2 run tf2_tools view_frames
 | `utm` | Zone-neutral UTM parent |
 | `stick_1/odom` | Local map origin — locked on first GPS fix (XY from UTM, Z at ellipsoid height datum) |
 | `stick_1/base_link` | **GPS antenna phase center** (position + yaw); Z in odom is relative to first-fix altitude |
-| `stick_1/modem_link` | Acoustic modem, 1.57 m below antenna by default |
+| `stick_1/modem_link` | Acoustic modem, 2.4 m below antenna by default |
 
 ---
 
@@ -283,7 +379,7 @@ ros2 run tf2_tools view_frames
 | `/stick_1/smarc/latlon` | ~25 Hz | Lat / lon / alt for WARAPS and TF |
 | `/stick_1/smarc/speed` | ~25 Hz | Ground speed (m/s) |
 | `/stick_1/smarc/heading` | ~25 Hz | Ground-track heading (rad) |
-| `/ntrip_client/rtcm` | ~1–3 Hz | RTCM corrections (injected into receiver) |
+| `/stick_1/ntrip_client/rtcm` | ~1–3 Hz | RTCM corrections (injected into receiver) |
 
 Topics **removed** on purpose (old stack had 3 RTCM topics; only NTRIP input is useful):
 
@@ -346,10 +442,10 @@ Rules grant `MODE=0666` to the raw USB device node. They do **not** apply to Tee
 
 ### Modem offset
 
-Default Z offset antenna → modem: **-1.57 m**. Override at launch:
+Default Z offset antenna → modem: **-2.4 m**. Override at launch:
 
 ```bash
-ros2 launch ublox_stick_bringup stick_gps_stack.launch.py modem_z_offset:=-1.57 ...
+ros2 launch ublox_stick_bringup stick_gps_stack.launch.py modem_z_offset:=-2.4 ...
 ```
 
 ### WARAPS MQTT (Level 1 only)
@@ -368,8 +464,8 @@ Upstream copies for smarc2 PR: `config/smarc2_upstream/`
 |---------|--------------|-----|
 | `ModuleNotFoundError: ublox_stick_smarc` / `ublox_stick_tf` | Missing `__init__.py` in clone (old `.gitignore`), workspace not sourced, or stale build | Pull latest `smarc2_stick`; ensure `ublox_stick_smarc/ublox_stick_smarc/__init__.py` and `ublox_stick_tf/ublox_stick_tf/__init__.py` exist; `source install/setup.bash`; `colcon build --paths src/ublox`; verify imports |
 | `malformed launch argument 'device_serial_string:='` | Empty `DEVICE_SERIAL_STRING` passed to launch | Fixed in latest `stick_bringup.sh` — pull and rebuild `ublox_stick_bringup` |
-| `ros2 topic echo /stick_1/rtcm` fails | Topic removed by design | Echo `/ntrip_client/rtcm` instead |
-| `/ntrip_client/rtcm` has no data | `ublox_dgnss` not running or NTRIP reconnecting | Check gps tmux window for errors; verify `ros2 node list \| grep ublox_dgnss` |
+| `ros2 topic echo /stick_1/rtcm` fails | Topic removed by design | Echo `/stick_1/ntrip_client/rtcm` instead |
+| `/stick_N/ntrip_client/rtcm` has no data | `ublox_dgnss` not running or NTRIP reconnecting | Check gps tmux window for errors; verify `ros2 node list \| grep ublox_dgnss` |
 | No `smarc/heading` / broken TF tree | VELNED not on UART1, or heading not flowing | On `serial_ubx`, confirm `CFG_MSGOUT_UBX_NAV_VELNED_UART1`; check `/stick_1/smarc/heading` and TF in `view_frames` |
 | `ublox_dgnss` segfault / dies on start | Stale build or old serial transport | `colcon build --packages-select ublox_dgnss_node --allow-overriding ublox_dgnss_node`; restart gps tmux window |
 | `ublox_dgnss` failed to load | Stale build | `colcon build --packages-select ublox_dgnss_node --allow-overriding ublox_dgnss_node` then restart gps window |

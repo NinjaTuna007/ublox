@@ -18,6 +18,8 @@ def generate_launch_description():
     ntrip_version = LaunchConfiguration('ntrip_version')
     gga_fix_topic = LaunchConfiguration('gga_fix_topic')
     gga_send_period_sec = LaunchConfiguration('gga_send_period_sec')
+    namespace = LaunchConfiguration('namespace')
+    rtcm_topic = LaunchConfiguration('rtcm_topic')
 
     return launch.LaunchDescription([
         DeclareLaunchArgument('use_https', default_value=TextSubstitution(text='false')),
@@ -31,9 +33,13 @@ def generate_launch_description():
         DeclareLaunchArgument('ntrip_version', default_value=TextSubstitution(text='')),
         DeclareLaunchArgument('gga_fix_topic', default_value=TextSubstitution(text='')),
         DeclareLaunchArgument('gga_send_period_sec', default_value=TextSubstitution(text='1.0')),
+        DeclareLaunchArgument('namespace', default_value=TextSubstitution(text='')),
+        DeclareLaunchArgument(
+            'rtcm_topic', default_value=TextSubstitution(text='/ntrip_client/rtcm'),
+            description='Topic RTCM is published to (the node publishes /ntrip_client/rtcm; remap per robot so multiple bringups on one computer stay isolated)'),
         ComposableNodeContainer(
             name='ntrip_client_container',
-            namespace='',
+            namespace=namespace,
             package='rclcpp_components',
             executable='component_container_mt',
             arguments=['--ros-args', '--log-level', log_level],
@@ -42,6 +48,7 @@ def generate_launch_description():
                     package='ntrip_client_node',
                     plugin='ublox_dgnss::NTRIPClientNode',
                     name='ntrip_client',
+                    namespace=namespace,
                     parameters=[{
                         'use_https': use_https,
                         'host': host,
@@ -55,6 +62,9 @@ def generate_launch_description():
                         'gga_fix_topic': gga_fix_topic,
                         'gga_send_period_sec': gga_send_period_sec,
                     }],
+                    remappings=[
+                        ('/ntrip_client/rtcm', rtcm_topic),
+                    ],
                 ),
             ],
         ),

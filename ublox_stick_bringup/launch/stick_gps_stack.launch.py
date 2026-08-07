@@ -126,6 +126,9 @@ def _launch_setup(context, *args, **kwargs):
                     name='ublox_dgnss',
                     namespace=robot_name,
                     parameters=dgnss_params,
+                    remappings=[
+                        ('/ntrip_client/rtcm', '/{}/ntrip_client/rtcm'.format(robot_name)),
+                    ],
                 ),
             ],
         )
@@ -184,6 +187,8 @@ def _launch_setup(context, *args, **kwargs):
                 'ntrip_version': LaunchConfiguration('ntrip_version'),
                 'gga_fix_topic': '/{}/ublox_gps_node/fix'.format(robot_name),
                 'gga_send_period_sec': LaunchConfiguration('gga_send_period_sec'),
+                'namespace': robot_name,
+                'rtcm_topic': '/{}/ntrip_client/rtcm'.format(robot_name),
             }.items(),
         )
         actions.append(ntrip_launch)
@@ -222,7 +227,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'serial_baud',
-            default_value='38400',
+            default_value='115200',
             description='Baud rate on Teensy UART1 bridge (match OWTT sketch GNSS_INITIAL_BAUD)',
         ),
         DeclareLaunchArgument(
@@ -242,7 +247,7 @@ def generate_launch_description():
             default_value=default_ubx_config,
             description='UBX TOML config (x20p_stick_sea_rover.toml for stick)',
         ),
-        DeclareLaunchArgument('modem_z_offset', default_value='-1.57'),
+        DeclareLaunchArgument('modem_z_offset', default_value='-2.4'),
         DeclareLaunchArgument('use_https', default_value='false'),
         DeclareLaunchArgument('host', default_value='nrtk-swepos.lm.se'),
         DeclareLaunchArgument('port', default_value='80'),
