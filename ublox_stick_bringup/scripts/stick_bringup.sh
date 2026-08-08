@@ -10,9 +10,6 @@ else
     ENV_FILE="${PKG_SHARE}/config/rtk_credentials.env"
 fi
 
-STICK_NUMBER="${1:-${STICK_NUMBER:-1}}"
-ROBOT_NAME=stick_${STICK_NUMBER}
-SESSION=${ROBOT_NAME}_bringup
 USE_SIM_TIME=False
 
 AGENT_TYPE=surface
@@ -31,17 +28,7 @@ WARAPS_CONFIG="${WARAPS_CONFIG:-${PKG_SHARE}/config/waraps_level1.yaml}"
 # OWTT acoustic setup: stick N <-> modem id 00N.
 # Sticks 1-2 are broadcasters (owtt_leader), sticks 3-4 are receivers (owtt_follower).
 ENABLE_OWTT="${ENABLE_OWTT:-true}"
-MODEM_ID="$(printf '%03d' "$STICK_NUMBER")"
 OWTT_ROLE="${OWTT_ROLE:-auto}"
-# TDMA schedule: 001 free-runs every 4 PPS epochs (~4 s); 002 broadcasts 2
-# epochs after each heard 001 frame, stacking one acoustic frame every 2 s.
-if [ -z "${BROADCAST_INTERVAL_S:-}" ]; then
-    if [ "$MODEM_ID" = "002" ]; then
-        BROADCAST_INTERVAL_S=2
-    else
-        BROADCAST_INTERVAL_S=4
-    fi
-fi
 OWTT_WORLD_FRAME="${OWTT_WORLD_FRAME:-utm}"
 # How often the leader pushes fresh $G to the Teensy. Synced to the 40 Hz TF
 # publisher by default; set 0.02 for 50 Hz.
@@ -57,16 +44,6 @@ LEADER1_NAME="${LEADER1_NAME:-stick_1}"
 LEADER1_MODEM_ID="${LEADER1_MODEM_ID:-001}"
 LEADER2_NAME="${LEADER2_NAME:-stick_2}"
 LEADER2_MODEM_ID="${LEADER2_MODEM_ID:-002}"
-# TDMA: broadcaster 001 goes first, 002 waits for 001's epoch.
-LISTEN_FOR_MODEM_ID="${LISTEN_FOR_MODEM_ID:-$([ "$MODEM_ID" = "002" ] && echo "001" || echo "000")}"
-# OCXO holdover experiment: seconds since Teensy boot after which it ignores
-# PPS and free-runs on the OCXO. Stick 4 defaults to 10 minutes; others never.
-IGNORE_PPS_AFTER_S="${IGNORE_PPS_AFTER_S:-$([ "$STICK_NUMBER" = "4" ] && echo 600 || echo 0)}"
-# Sound velocity sensor (Valeport ultraSV, pvptu_driver) lives on ONE stick —
-# stick 3 by default. It publishes Float64 on /<robot>/smarc/sound_velocity;
-# followers on the same computer read it across the shared ROS graph, so
-# SVS_SOURCE_ROBOT tells each follower where the sensor lives.
-HAS_SVS_SENSOR="${HAS_SVS_SENSOR:-$([ "$STICK_NUMBER" = "3" ] && echo true || echo false)}"
 SVS_SOURCE_ROBOT="${SVS_SOURCE_ROBOT:-stick_3}"
 
 if [ ! -f "$ENV_FILE" ]; then
@@ -78,6 +55,66 @@ set -a
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 set +a
+
+# Stick number: CLI arg > STICK_NUMBER env > auto from TEENSY_USB_SERIAL_* pins.
+# Bare `stick_bringup.sh` with one pinned box plugged in selects that role.
+if [ -n "${1:-}" ]; then
+    STICK_NUMBER="$1"
+elif [ -n "${STICK_NUMBER:-}" ]; then
+    :
+else
+    plugged=$(compgen -G '/dev/serial/by-id/usb-Teensyduino_Dual_Serial_*-if00' || true)
+    plugged_count=$(printf '%s\n' "$plugged" | grep -c . || true)
+    if [ "$plugged_count" -eq 0 ]; then
+        echo "ERROR: no Teensy Dual Serial found under /dev/serial/by-id/." >&2
+        echo "Pass stick number explicitly (1-4), or plug a pinned box." >&2
+        exit 1
+    fi
+    if [ "$plugged_count" -gt 1 ]; then
+        echo "ERROR: $plugged_count Teensy boxes plugged; cannot auto-select stick number." >&2
+        echo "Pass the stick number explicitly, e.g. stick_bringup.sh 1" >&2
+        printf '%s\n' "$plugged" >&2
+        exit 1
+    fi
+    discovered_serial=$(printf '%s\n' "$plugged" | sed -n 's/.*Dual_Serial_\([0-9]*\)-if00/\1/p')
+    STICK_NUMBER=""
+    for n in 1 2 3 4; do
+        var="TEENSY_USB_SERIAL_$n"
+        if [ -n "${!var:-}" ] && [ "${!var}" = "$discovered_serial" ]; then
+            STICK_NUMBER="$n"
+            break
+        fi
+    done
+    if [ -z "$STICK_NUMBER" ]; then
+        echo "ERROR: Teensy USB serial '$discovered_serial' is not pinned in $ENV_FILE." >&2
+        echo "Set TEENSY_USB_SERIAL_<N>=$discovered_serial, or pass stick number + TEENSY_USB_SERIAL=any." >&2
+        exit 1
+    fi
+    echo "Auto-selected stick $STICK_NUMBER from Teensy USB serial $discovered_serial"
+fi
+
+ROBOT_NAME=stick_${STICK_NUMBER}
+SESSION=${ROBOT_NAME}_bringup
+MODEM_ID="$(printf '%03d' "$STICK_NUMBER")"
+# TDMA schedule: 001 free-runs every 4 PPS epochs (~4 s); 002 broadcasts 2
+# epochs after each heard 001 frame, stacking one acoustic frame every 2 s.
+if [ -z "${BROADCAST_INTERVAL_S:-}" ]; then
+    if [ "$MODEM_ID" = "002" ]; then
+        BROADCAST_INTERVAL_S=2
+    else
+        BROADCAST_INTERVAL_S=4
+    fi
+fi
+# TDMA: broadcaster 001 goes first, 002 waits for 001's epoch.
+LISTEN_FOR_MODEM_ID="${LISTEN_FOR_MODEM_ID:-$([ "$MODEM_ID" = "002" ] && echo "001" || echo "000")}"
+# OCXO holdover experiment: seconds since Teensy boot after which it ignores
+# PPS and free-runs on the OCXO. Stick 4 defaults to 10 minutes; others never.
+IGNORE_PPS_AFTER_S="${IGNORE_PPS_AFTER_S:-$([ "$STICK_NUMBER" = "4" ] && echo 600 || echo 0)}"
+# Sound velocity sensor (Valeport ultraSV, pvptu_driver) lives on ONE stick —
+# stick 3 by default. It publishes Float64 on /<robot>/smarc/sound_velocity;
+# followers on the same computer read it across the shared ROS graph, so
+# SVS_SOURCE_ROBOT tells each follower where the sensor lives.
+HAS_SVS_SENSOR="${HAS_SVS_SENSOR:-$([ "$STICK_NUMBER" = "3" ] && echo true || echo false)}"
 
 NTRIP_HOST="${NTRIP_HOST:-nrtk-swepos.lm.se}"
 NTRIP_PORT="${NTRIP_PORT:-80}"
@@ -124,22 +161,33 @@ resolve_teensy_port() {
         if [ -n "$TEENSY_USB_SERIAL" ]; then
             echo "ERROR: pinned Teensy usb serial '$TEENSY_USB_SERIAL' not found: $pattern" >&2
             echo "Is the box for stick $STICK_NUMBER plugged in?" >&2
-            exit 1
+            echo "Override with TEENSY_USB_SERIAL=<serial>|any if this box should run as stick $STICK_NUMBER." >&2
+            return 1
         fi
         printf '%s\n' "$fallback"
-        return
+        return 0
     fi
     if [ "$count" -gt 1 ]; then
         echo "ERROR: $count Teensy boxes detected but TEENSY_USB_SERIAL is not set." >&2
         echo "Add TEENSY_USB_SERIAL_${STICK_NUMBER}=<usb serial> to $ENV_FILE. Candidates:" >&2
         printf '%s\n' "$matches" >&2
-        exit 1
+        return 1
     fi
     printf '%s\n' "$matches"
 }
 
-LOLO_PORT="${LOLO_PORT:-$(resolve_teensy_port if00 /dev/ttyACM0)}"
-SERIAL_PORT="${SERIAL_PORT:-$(resolve_teensy_port if02 /dev/ttyACM1)}"
+# Do not call resolve inside ${VAR:-$(...)} alone: a pin miss used to `exit 1`
+# only the subshell, leaving serial_port:= empty and launch "succeeding" broken.
+if [ -z "${LOLO_PORT:-}" ]; then
+    LOLO_PORT="$(resolve_teensy_port if00 /dev/ttyACM0)" || exit 1
+fi
+if [ -z "${SERIAL_PORT:-}" ]; then
+    SERIAL_PORT="$(resolve_teensy_port if02 /dev/ttyACM1)" || exit 1
+fi
+if [ -z "$LOLO_PORT" ] || [ -z "$SERIAL_PORT" ]; then
+    echo "ERROR: resolved empty Teensy port(s): LOLO_PORT='$LOLO_PORT' SERIAL_PORT='$SERIAL_PORT'" >&2
+    exit 1
+fi
 
 if [ "$USE_SIM_TIME" = "True" ]; then
     REALSIM=simulation
