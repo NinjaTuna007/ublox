@@ -192,7 +192,7 @@ ros2 run ublox_stick_bringup stick_bringup.sh 3   # on stick 3, etc.
 
 - `succorfish` window: `succorfish_driver` owns the Teensy LoLo protocol port @ 115200 and bridges it to `succorfish/tx` / `succorfish/rx`. Ports are resolved via `/dev/serial/by-id/` symlinks, so `/dev/ttyACM*` renumbering after replug/flash does not break bringup.
 - `serial_ping` window on broadcasters: `owtt_leader_node` sends `$Y001T0004s` (stick 1) / `$Y002T0012s` (stick 2), waits for `#A00N` ack, then pushes GPS (`$G<lat>,<lon>` with modem lever arm applied via TF) every 1 s; the Teensy broadcasts acoustically on the PPS epoch schedule. Combined airtime: one frame every 2 s, alternating 001/002.
-- `serial_ping` window on receivers: `owtt_follower_node` sends `$Y00NR`, parses `#B`/`#I` frames, and publishes each broadcaster's position on `/<leader>/smarc/latlon` plus range on `/<leader>/distance` (leaders default to `stick_1`/`stick_2` ↔ modems `001`/`002`).
+- `serial_ping` window on receivers: `owtt_follower_node` sends `$Y00NR`, parses `#B`/`#I` frames, and publishes each broadcaster's position on `/<follower>/owtt/<leader>/smarc/latlon` plus range on `/<follower>/owtt/<leader>/distance` (leaders default to `stick_1`/`stick_2` ↔ modems `001`/`002`).
 
 **Tuning (env vars, defaults shown):**
 
@@ -211,7 +211,7 @@ LEADER2_NAME=stick_2 LEADER2_MODEM_ID=002
 
 **Healthy broadcaster logs:** `Registered shutdown command '$Y001W'` (succorfish), then `$Y001T0004s` → `config confirmed: #A001` → `-> Teensy: '$G59.34...,18.07...'` every second (serial_ping).
 
-**Healthy receiver logs:** `$Y003R` → `#B001...` + `#I<delta_us>` lines → `/stick_1/distance` publishing.
+**Healthy receiver logs:** `$Y003R` → `#B001...` + `#I<delta_us>` lines → `/stick_3/owtt/stick_1/distance` publishing.
 
 Requires `serial_ping_pkg` + `succorfish_driver` built in the workspace and the **OWTT_Modem_LOLO_ver3** Teensy sketch.
 
@@ -241,7 +241,7 @@ If the assignment is stable for a while you can instead set `TEENSY_USB_SERIAL_3
 
 Everything else is already isolated per stick: ROS topics are namespaced (`/stick_3/...` vs `/stick_4/...`), each robot has its own RTCM topic (`/stick_3/ntrip_client/rtcm`, `/stick_4/ntrip_client/rtcm`), and each tmux session gets its own name (`stick_3_bringup`, `stick_4_bringup`).
 
-For the **OCXO holdover experiment** (stick 04): the ROS side is **identical** — the full GNSS stack and NTRIP keep running; only the Teensy's timing reference changes, and that change is **firmware-configured, not hardware**. The `owtt_follower` launch sends `$ZIGNOREPPSAFTER=<seconds>` to the Teensy at startup (all other sticks send nothing / `0` = never ignore). From that many seconds after Teensy boot, the sketch stops accepting real PPS captures; `last_real_pps_us` goes stale and timing drifts into OCXO holdover 1.2 s after the last accepted PPS — exactly as if the PPS wire had been cut. Set it per launch:
+For the **OCXO holdover experiment** (stick 04): the ROS side is **identical** — the full GNSS stack and NTRIP keep running; only the Teensy's timing reference changes, and that change is **firmware-configured, not hardware**. At follower start the node sends `$ZIGNOREPPSAFTER=0`, waits for `#IGNOREPPSAFTER,0`, then `$ZIGNOREPPSAFTER=<seconds>` and waits for that ACK (all other sticks leave the param at `0` and skip this). Firmware arms the deadline from **that command** (not Teensy boot), so restarting `serial_ping` restarts the countdown. After N seconds it stops accepting real PPS; `last_real_pps_us` goes stale and timing drifts into OCXO holdover 1.2 s after the last accepted PPS — exactly as if the PPS wire had been cut. Set it per launch:
 
 ```bash
 IGNORE_PPS_AFTER_S=600 FOXGLOVE_PORT=8766 \

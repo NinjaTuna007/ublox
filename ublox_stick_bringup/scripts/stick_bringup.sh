@@ -1,4 +1,9 @@
 #! /bin/bash
+# DDS discovery is left open by default so a normal shell can
+# `ros2 bag record -a` this machine's graph. If pier laptops share wifi
+# with this PC again (Humble↔Jazzy crosstalk / foreign TF latch), launch with
+# ROS_LOCALHOST_ONLY=1.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_SHARE="$(ros2 pkg prefix ublox_stick_bringup)/share/ublox_stick_bringup"
 SOURCE_ENV="${SCRIPT_DIR}/../config/rtk_credentials.env"
@@ -107,8 +112,8 @@ if [ -z "${BROADCAST_INTERVAL_S:-}" ]; then
 fi
 # TDMA: broadcaster 001 goes first, 002 waits for 001's epoch.
 LISTEN_FOR_MODEM_ID="${LISTEN_FOR_MODEM_ID:-$([ "$MODEM_ID" = "002" ] && echo "001" || echo "000")}"
-# OCXO holdover experiment: seconds since Teensy boot after which it ignores
-# PPS and free-runs on the OCXO. Stick 4 defaults to 10 minutes; others never.
+# OCXO holdover experiment: seconds after arming before Teensy ignores PPS
+# and free-runs on the OCXO. Stick 4 defaults to 10 minutes; others never.
 IGNORE_PPS_AFTER_S="${IGNORE_PPS_AFTER_S:-$([ "$STICK_NUMBER" = "4" ] && echo 600 || echo 0)}"
 # Sound velocity sensor (Valeport ultraSV, pvptu_driver) lives on ONE stick —
 # stick 3 by default. It publishes Float64 on /<robot>/smarc/sound_velocity;
@@ -196,6 +201,10 @@ else
 fi
 
 tmux -2 new-session -d -s "$SESSION" -n 'gps'
+# Propagate explicit DDS isolation into the session when requested.
+if [ -n "${ROS_LOCALHOST_ONLY:-}" ]; then
+    tmux set-environment -t "$SESSION" ROS_LOCALHOST_ONLY "$ROS_LOCALHOST_ONLY"
+fi
 tmux select-window -t "$SESSION:0"
 GPS_LAUNCH_ARGS="robot_name:=$ROBOT_NAME gps_backend:=$GPS_BACKEND serial_port:=$SERIAL_PORT serial_baud:=$SERIAL_BAUD enable_ntrip:=$ENABLE_NTRIP"
 if [ -n "$DEVICE_SERIAL_STRING" ]; then

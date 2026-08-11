@@ -166,7 +166,7 @@ Stick roles (default):
 - [ ] `/stick_<N>/ublox_gps_node/fix` publishing (fix status ≥0; outdoor RTK may take time)
 - [ ] `succorfish` window open on LoLo; config commands visible
 - [ ] Leader: eventually `#Y,OK,<id>` then `$G` / acoustic TX — **not** endless `#E,Y,ADDR_TIMEOUT`
-- [ ] Follower (when TX exists): `#I…` and `/stick_<leader>/distance` ~physical range
+- [ ] Follower (when TX exists): `#I…` and `/stick_<N>/owtt/stick_<leader>/distance` ~physical range
 
 `#E,Y,ADDR_TIMEOUT` = Teensy↔Succorfish modem path (power / UART / modem), not GNSS.
 
