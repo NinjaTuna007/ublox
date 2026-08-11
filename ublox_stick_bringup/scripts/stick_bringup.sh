@@ -1,8 +1,6 @@
 #! /bin/bash
-# DDS discovery is left open by default so a normal shell can
-# `ros2 bag record -a` this machine's graph. If pier laptops share wifi
-# with this PC again (Humble↔Jazzy crosstalk / foreign TF latch), launch with
-# ROS_LOCALHOST_ONLY=1.
+# DDS: open by default (shared graph for bag record / multi-stick). Optional
+# hard isolation via DDS_ISOLATE=1 — see below after STICK_NUMBER is known.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_SHARE="$(ros2 pkg prefix ublox_stick_bringup)/share/ublox_stick_bringup"
@@ -29,6 +27,10 @@ SERIAL_BAUD="${SERIAL_BAUD:-115200}"
 ENABLE_NTRIP="${ENABLE_NTRIP:-true}"
 DEVICE_SERIAL_STRING="${DEVICE_SERIAL_STRING:-}"
 WARAPS_CONFIG="${WARAPS_CONFIG:-${PKG_SHARE}/config/waraps_level1.yaml}"
+# Opt-in DDS isolation (default OFF). When 1/true: ROS_LOCALHOST_ONLY=1 and
+# ROS_DOMAIN_ID=<stick number> inside the tmux session only. Ambient shell
+# ROS_LOCALHOST_ONLY / ROS_DOMAIN_ID are ignored unless this flag is set.
+DDS_ISOLATE="${DDS_ISOLATE:-0}"
 
 # OWTT acoustic setup: stick N <-> modem id 00N.
 # Sticks 1-2 are broadcasters (owtt_leader), sticks 3-4 are receivers (owtt_follower).
@@ -201,29 +203,42 @@ else
 fi
 
 tmux -2 new-session -d -s "$SESSION" -n 'gps'
-# Propagate explicit DDS isolation into the session when requested.
-if [ -n "${ROS_LOCALHOST_ONLY:-}" ]; then
-    tmux set-environment -t "$SESSION" ROS_LOCALHOST_ONLY "$ROS_LOCALHOST_ONLY"
-fi
+# DDS isolation is opt-in only (DDS_ISOLATE=1). Default: strip any ambient
+# ROS_LOCALHOST_ONLY / ROS_DOMAIN_ID so sticks share one discovery graph.
+# Prefix is applied on every send-keys because the first pane shell already
+# inherited the launching environment before set-environment can help.
+case "${DDS_ISOLATE,,}" in
+    1|true|yes|on)
+        tmux set-environment -t "$SESSION" ROS_LOCALHOST_ONLY 1
+        tmux set-environment -t "$SESSION" ROS_DOMAIN_ID "$STICK_NUMBER"
+        DDS_ENV_PREFIX="export ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID=$STICK_NUMBER; "
+        echo "DDS_ISOLATE on: ROS_LOCALHOST_ONLY=1 ROS_DOMAIN_ID=$STICK_NUMBER (tmux $SESSION)"
+        ;;
+    *)
+        tmux set-environment -t "$SESSION" -u ROS_LOCALHOST_ONLY
+        tmux set-environment -t "$SESSION" -u ROS_DOMAIN_ID
+        DDS_ENV_PREFIX="unset ROS_LOCALHOST_ONLY ROS_DOMAIN_ID; "
+        ;;
+esac
 tmux select-window -t "$SESSION:0"
 GPS_LAUNCH_ARGS="robot_name:=$ROBOT_NAME gps_backend:=$GPS_BACKEND serial_port:=$SERIAL_PORT serial_baud:=$SERIAL_BAUD enable_ntrip:=$ENABLE_NTRIP"
 if [ -n "$DEVICE_SERIAL_STRING" ]; then
     GPS_LAUNCH_ARGS="$GPS_LAUNCH_ARGS device_serial_string:=$DEVICE_SERIAL_STRING"
 fi
 GPS_LAUNCH_ARGS="$GPS_LAUNCH_ARGS username:=$NTRIP_USERNAME password:=$NTRIP_PASSWORD host:=$NTRIP_HOST port:=$NTRIP_PORT mountpoint:=$NTRIP_MOUNTPOINT"
-tmux send-keys "ros2 launch ublox_stick_bringup stick_gps_stack.launch.py $GPS_LAUNCH_ARGS" C-m
+tmux send-keys "${DDS_ENV_PREFIX}ros2 launch ublox_stick_bringup stick_gps_stack.launch.py $GPS_LAUNCH_ARGS" C-m
 
 tmux new-window -t "$SESSION:1" -n 'foxglove'
 tmux select-window -t "$SESSION:1"
-tmux send-keys "ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=$FOXGLOVE_PORT" C-m
+tmux send-keys "${DDS_ENV_PREFIX}ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=$FOXGLOVE_PORT" C-m
 
 tmux new-window -t "$SESSION:2" -n 'waraps'
 tmux select-window -t "$SESSION:2"
-tmux send-keys "ros2 launch wasp_bt wasp_mqtt_agent.launch robot_name:=$ROBOT_NAME agent_type:=$AGENT_TYPE pulse_rate:=$PULSE_RATE use_sim_time:=$USE_SIM_TIME" C-m
+tmux send-keys "${DDS_ENV_PREFIX}ros2 launch wasp_bt wasp_mqtt_agent.launch robot_name:=$ROBOT_NAME agent_type:=$AGENT_TYPE pulse_rate:=$PULSE_RATE use_sim_time:=$USE_SIM_TIME" C-m
 
 tmux new-window -t "$SESSION:3" -n 'mqtt'
 tmux select-window -t "$SESSION:3"
-tmux send-keys "ros2 launch str_json_mqtt_bridge waraps_bridge.launch broker_addr:=$BROKER_ADDR broker_port:=$BROKER_PORT robot_name:=$ROBOT_NAME domain:=$DOMAIN realsim:=$REALSIM use_sim_time:=$USE_SIM_TIME context:=$CONTEXT mqtt_params_file:=$WARAPS_CONFIG" C-m
+tmux send-keys "${DDS_ENV_PREFIX}ros2 launch str_json_mqtt_bridge waraps_bridge.launch broker_addr:=$BROKER_ADDR broker_port:=$BROKER_PORT robot_name:=$ROBOT_NAME domain:=$DOMAIN realsim:=$REALSIM use_sim_time:=$USE_SIM_TIME context:=$CONTEXT mqtt_params_file:=$WARAPS_CONFIG" C-m
 
 if [ "$ENABLE_OWTT" = "true" ]; then
     if [ "$OWTT_ROLE" = "auto" ]; then
@@ -246,11 +261,11 @@ fi
 if [ "$HAS_SVS_SENSOR" = "true" ]; then
     tmux new-window -t "$SESSION:4" -n 'pvptu'
     tmux select-window -t "$SESSION:4"
-    tmux send-keys "ros2 launch pvptu_driver pvptu_driver.launch.py robot_name:=$ROBOT_NAME topic:=smarc/sound_velocity" C-m
+    tmux send-keys "${DDS_ENV_PREFIX}ros2 launch pvptu_driver pvptu_driver.launch.py robot_name:=$ROBOT_NAME topic:=smarc/sound_velocity" C-m
 
     tmux new-window -t "$SESSION:5" -n 'sound_vel'
     tmux select-window -t "$SESSION:5"
-    tmux send-keys "ros2 launch ublox_stick_bringup sound_velocity_relay.launch.py robot_name:=$ROBOT_NAME input_topic:=smarc/sound_velocity" C-m
+    tmux send-keys "${DDS_ENV_PREFIX}ros2 launch ublox_stick_bringup sound_velocity_relay.launch.py robot_name:=$ROBOT_NAME input_topic:=smarc/sound_velocity" C-m
 
     tmux new-window -t "$SESSION:6" -n 'succorfish'
     tmux new-window -t "$SESSION:7" -n 'serial_ping'
@@ -267,9 +282,9 @@ fi
 
 if [ "$ENABLE_OWTT" = "true" ]; then
     tmux select-window -t "$SESSION:$SUCCORFISH_WIN"
-    tmux send-keys "$SUCCORFISH_CMD" C-m
+    tmux send-keys "${DDS_ENV_PREFIX}$SUCCORFISH_CMD" C-m
     tmux select-window -t "$SESSION:$SERIAL_PING_WIN"
-    tmux send-keys "$SERIAL_PING_CMD" C-m
+    tmux send-keys "${DDS_ENV_PREFIX}$SERIAL_PING_CMD" C-m
 fi
 
 tmux select-window -t "$SESSION:0"

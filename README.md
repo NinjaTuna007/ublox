@@ -207,6 +207,7 @@ HAS_SVS_SENSOR=auto              # true on stick 3, false elsewhere (pvptu + sou
 SVS_SOURCE_ROBOT=stick_3         # which robot's /smarc/sound_velocity the follower reads
 LEADER1_NAME=stick_1 LEADER1_MODEM_ID=001
 LEADER2_NAME=stick_2 LEADER2_MODEM_ID=002
+DDS_ISOLATE=0                    # 1 = opt-in hard DDS split (see below); default shared graph
 ```
 
 **Healthy broadcaster logs:** `Registered shutdown command '$Y001W'` (succorfish), then `$Y001T0004s` → `config confirmed: #A001` → `-> Teensy: '$G59.34...,18.07...'` every second (serial_ping).
@@ -239,7 +240,15 @@ TEENSY_USB_SERIAL=<serialB> FOXGLOVE_PORT=8766 \
 
 If the assignment is stable for a while you can instead set `TEENSY_USB_SERIAL_3` / `TEENSY_USB_SERIAL_4` once in `rtk_credentials.env` and drop the prefix; the per-launch `TEENSY_USB_SERIAL` always wins, and `TEENSY_USB_SERIAL=any` ignores pins entirely (single-box escape hatch).
 
-Everything else is already isolated per stick: ROS topics are namespaced (`/stick_3/...` vs `/stick_4/...`), each robot has its own RTCM topic (`/stick_3/ntrip_client/rtcm`, `/stick_4/ntrip_client/rtcm`), and each tmux session gets its own name (`stick_3_bringup`, `stick_4_bringup`).
+Everything else is already separated per stick by **topic namespace** (`/stick_3/...` vs `/stick_4/...`), per-robot RTCM topics, and tmux session names — sticks on the same machine still share one ROS DDS graph by default so a normal shell can `ros2 bag record -a` / `ros2 topic echo` everything.
+
+Optional hard DDS isolation (off unless you ask for it) — localhost-only discovery plus `ROS_DOMAIN_ID=<stick number>` inside that bringup's tmux session only:
+
+```bash
+DDS_ISOLATE=1 FOXGLOVE_PORT=8766 ros2 run ublox_stick_bringup stick_bringup.sh 4
+```
+
+Use that when pier laptops on the same wifi cause Humble↔Jazzy crosstalk / foreign TF latch. Ambient `ROS_LOCALHOST_ONLY` / `ROS_DOMAIN_ID` in your shell are ignored unless `DDS_ISOLATE=1`.
 
 For the **OCXO holdover experiment** (stick 04): the ROS side is **identical** — the full GNSS stack and NTRIP keep running; only the Teensy's timing reference changes, and that change is **firmware-configured, not hardware**. At follower start the node sends `$ZIGNOREPPSAFTER=0`, waits for `#IGNOREPPSAFTER,0`, then `$ZIGNOREPPSAFTER=<seconds>` and waits for that ACK (all other sticks leave the param at `0` and skip this). Firmware arms the deadline from **that command** (not Teensy boot), so restarting `serial_ping` restarts the countdown. After N seconds it stops accepting real PPS; `last_real_pps_us` goes stale and timing drifts into OCXO holdover 1.2 s after the last accepted PPS — exactly as if the PPS wire had been cut. Set it per launch:
 
