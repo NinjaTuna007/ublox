@@ -113,9 +113,12 @@ def _launch_setup(context, *args, **kwargs):
                 {'CFG_MSGOUT_UBX_RXM_RTCM_USB': 0},
             ])
 
+        # Container FQN must be per-robot. A shared /ublox_dgnss_container lets
+        # the second bringup load its node into the first process, which then
+        # owns both Teensy GNSS ports and RTCM writes EAGAIN.
         ublox_dgnss_container = ComposableNodeContainer(
             name='ublox_dgnss_container',
-            namespace='',
+            namespace=robot_name,
             package='rclcpp_components',
             executable='component_container_mt',
             arguments=['--ros-args', '--log-level', log_level],
@@ -135,7 +138,7 @@ def _launch_setup(context, *args, **kwargs):
 
         navsatfix_container = ComposableNodeContainer(
             name='ublox_nav_sat_fix_hp_container',
-            namespace='',
+            namespace=robot_name,
             package='rclcpp_components',
             executable='component_container_mt',
             arguments=['--ros-args', '--log-level', log_level],
