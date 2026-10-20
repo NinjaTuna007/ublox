@@ -37,13 +37,13 @@ DDS_ISOLATE="${DDS_ISOLATE:-0}"
 ENABLE_OWTT="${ENABLE_OWTT:-true}"
 OWTT_ROLE="${OWTT_ROLE:-auto}"
 OWTT_WORLD_FRAME="${OWTT_WORLD_FRAME:-utm}"
-# How often the leader pushes fresh $G to the Teensy. Synced to the 40 Hz TF
-# publisher by default; set 0.02 for 50 Hz.
+# How often the leader pushes a fresh DCCL Pose ($K) to the Teensy. Synced to
+# the 40 Hz TF publisher by default; set 0.02 for 50 Hz.
 GPS_SEND_PERIOD_S="${GPS_SEND_PERIOD_S:-0.025}"
 # Field-tunable OWTT freshness gates (leaders / transmitters):
-#   PAYLOAD_TTL_EPOCHS — Teensy stops acoustic TX if no new $G for N PPS epochs
+#   PAYLOAD_TTL_EPOCHS — Teensy stops acoustic TX if no new $K for N PPS epochs
 #                        (default 1 ≈ 1 s). 0 = never expire (bench only).
-#   MAX_POSITION_AGE_S — ROS leader stops pushing $G if /smarc/latlon (or
+#   MAX_POSITION_AGE_S — ROS leader stops pushing $K if /smarc/latlon (or
 #                        latlon_topic) has been silent this long (default 5 s).
 PAYLOAD_TTL_EPOCHS="${PAYLOAD_TTL_EPOCHS:-1}"
 MAX_POSITION_AGE_S="${MAX_POSITION_AGE_S:-5.0}"
@@ -226,7 +226,10 @@ if [ -n "$DEVICE_SERIAL_STRING" ]; then
     GPS_LAUNCH_ARGS="$GPS_LAUNCH_ARGS device_serial_string:=$DEVICE_SERIAL_STRING"
 fi
 GPS_LAUNCH_ARGS="$GPS_LAUNCH_ARGS username:=$NTRIP_USERNAME password:=$NTRIP_PASSWORD host:=$NTRIP_HOST port:=$NTRIP_PORT mountpoint:=$NTRIP_MOUNTPOINT"
-tmux send-keys "${DDS_ENV_PREFIX}ros2 launch ublox_stick_bringup stick_gps_stack.launch.py $GPS_LAUNCH_ARGS" C-m
+# User-site NumPy 2 shadows Ubuntu's 1.26 and breaks distro transforms3d
+# (np.maximum_sctype). The GPS stack stays on the distro packages. The OWTT
+# leader window still sees the user site, which is where protobuf 4.25 lives.
+tmux send-keys "${DDS_ENV_PREFIX}PYTHONNOUSERSITE=1 ros2 launch ublox_stick_bringup stick_gps_stack.launch.py $GPS_LAUNCH_ARGS" C-m
 
 tmux new-window -t "$SESSION:1" -n 'foxglove'
 tmux select-window -t "$SESSION:1"
@@ -234,7 +237,7 @@ tmux send-keys "${DDS_ENV_PREFIX}ros2 launch foxglove_bridge foxglove_bridge_lau
 
 tmux new-window -t "$SESSION:2" -n 'waraps'
 tmux select-window -t "$SESSION:2"
-tmux send-keys "${DDS_ENV_PREFIX}ros2 launch wasp_bt wasp_mqtt_agent.launch robot_name:=$ROBOT_NAME agent_type:=$AGENT_TYPE pulse_rate:=$PULSE_RATE use_sim_time:=$USE_SIM_TIME" C-m
+tmux send-keys "${DDS_ENV_PREFIX}PYTHONNOUSERSITE=1 ros2 launch wasp_bt wasp_mqtt_agent.launch robot_name:=$ROBOT_NAME agent_type:=$AGENT_TYPE pulse_rate:=$PULSE_RATE use_sim_time:=$USE_SIM_TIME" C-m
 
 tmux new-window -t "$SESSION:3" -n 'mqtt'
 tmux select-window -t "$SESSION:3"
@@ -256,6 +259,8 @@ if [ "$ENABLE_OWTT" = "true" ]; then
     else
         SERIAL_PING_CMD="ros2 launch serial_ping_pkg owtt_follower_node.launch.py own_modem_id:=$MODEM_ID leader1_name:=$LEADER1_NAME leader1_modem_id:=$LEADER1_MODEM_ID leader2_name:=$LEADER2_NAME leader2_modem_id:=$LEADER2_MODEM_ID ignore_pps_after_s:=$IGNORE_PPS_AFTER_S robot_name:=$ROBOT_NAME sound_velocity_topic:=/$SVS_SOURCE_ROBOT/smarc/sound_velocity"
     fi
+    # Own window. Ctrl-C in serial_ping must not take the abort service down.
+    ACOUSTIC_CMD="ros2 launch serial_ping_pkg acoustic_cmd.launch robot_name:=$ROBOT_NAME own_modem_id:=$MODEM_ID"
 fi
 
 if [ "$HAS_SVS_SENSOR" = "true" ]; then
@@ -268,21 +273,27 @@ if [ "$HAS_SVS_SENSOR" = "true" ]; then
     tmux send-keys "${DDS_ENV_PREFIX}ros2 launch ublox_stick_bringup sound_velocity_relay.launch.py robot_name:=$ROBOT_NAME input_topic:=smarc/sound_velocity" C-m
 
     tmux new-window -t "$SESSION:6" -n 'succorfish'
-    tmux new-window -t "$SESSION:7" -n 'serial_ping'
-    tmux new-window -t "$SESSION:8" -n 'spare'
+    tmux new-window -t "$SESSION:7" -n 'acoustic_cmd'
+    tmux new-window -t "$SESSION:8" -n 'serial_ping'
+    tmux new-window -t "$SESSION:9" -n 'spare'
     SUCCORFISH_WIN=6
-    SERIAL_PING_WIN=7
+    ACOUSTIC_CMD_WIN=7
+    SERIAL_PING_WIN=8
 else
     tmux new-window -t "$SESSION:4" -n 'succorfish'
-    tmux new-window -t "$SESSION:5" -n 'serial_ping'
-    tmux new-window -t "$SESSION:6" -n 'spare'
+    tmux new-window -t "$SESSION:5" -n 'acoustic_cmd'
+    tmux new-window -t "$SESSION:6" -n 'serial_ping'
+    tmux new-window -t "$SESSION:7" -n 'spare'
     SUCCORFISH_WIN=4
-    SERIAL_PING_WIN=5
+    ACOUSTIC_CMD_WIN=5
+    SERIAL_PING_WIN=6
 fi
 
 if [ "$ENABLE_OWTT" = "true" ]; then
     tmux select-window -t "$SESSION:$SUCCORFISH_WIN"
     tmux send-keys "${DDS_ENV_PREFIX}$SUCCORFISH_CMD" C-m
+    tmux select-window -t "$SESSION:$ACOUSTIC_CMD_WIN"
+    tmux send-keys "${DDS_ENV_PREFIX}$ACOUSTIC_CMD" C-m
     tmux select-window -t "$SESSION:$SERIAL_PING_WIN"
     tmux send-keys "${DDS_ENV_PREFIX}$SERIAL_PING_CMD" C-m
 fi
